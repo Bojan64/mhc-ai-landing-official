@@ -82,7 +82,8 @@
     var s = parsed || {};
     state = {
       settings: Object.assign(defaultSettings(), s.settings || {}),
-      reservations: Array.isArray(s.reservations) ? s.reservations : []
+      reservations: Array.isArray(s.reservations) ? s.reservations : [],
+      demoSeededOn: s.demoSeededOn || null
     };
     return state;
   }
@@ -346,7 +347,7 @@
           notes: i % 5 === 2 ? "Miza ob oknu, če je mogoče" : "", occasion: occ[(i + d) % occ.length],
           allergies: i % 7 === 3 ? "brez glutena" : "", tableIds: tbl, status: status,
           source: ["splet", "splet", "telefon", "splet", "walk-in"][i % 5], marketing: false,
-          createdAt: new Date().toISOString(), history: [{ at: new Date().toISOString(), what: "Demo podatki" }]
+          createdAt: new Date().toISOString(), demo: true, history: [{ at: new Date().toISOString(), what: "Demo podatki" }]
         });
         made++;
       }
@@ -357,7 +358,20 @@
 
   function resetAll() { state = { settings: defaultSettings(), reservations: [] }; save(); }
 
+  // DEMO: ob prvem obisku (in vsak nov dan) naloži sveže primere rezervacij,
+  // da je razpored vedno poln. Rezervacije, ki jih vnese uporabnik, ostanejo.
+  var DEMO = true;
+  function ensureDemo() {
+    var t = today();
+    if (state.demoSeededOn === t) return;
+    state.reservations = state.reservations.filter(function (r) { return !r.demo && r.date >= t; });
+    state.demoSeededOn = t;
+    seedDemo();
+  }
+  function resetDemo() { state = { settings: defaultSettings(), reservations: [] }; ensureDemo(); }
+
   load();
+  if (DEMO) ensureDemo();
 
   global.RS = {
     STATUS: STATUS, BLOCKING: BLOCKING, DAYS: DAYS, DAYS_SHORT: DAYS_SHORT, MONTHS: MONTHS,
@@ -370,6 +384,7 @@
     validateGuest: validateGuest, create: create, update: update, setStatus: setStatus, get: get, remove: remove,
     findByCode: findByCode, canGuestCancel: canGuestCancel, forDay: forDay, saveSettings: saveSettings,
     tableName: tableName, toCSV: toCSV, toICS: toICS, download: download, seedDemo: seedDemo, resetAll: resetAll,
+    DEMO: DEMO, resetDemo: resetDemo,
     defaultSettings: defaultSettings
   };
 })(window);

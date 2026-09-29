@@ -17,9 +17,21 @@ Dve strani in skupna logika, brez gradnje in brez odvisnosti:
 - Samodejna ali ročna potrditev spletnih rezervacij.
 - Zavihka gost/osebje v istem brskalniku se sinhronizirata v živo.
 
-Za preizkus: odprite `admin.html` → Nastavitve → **Naloži demo rezervacije**.
+## Demo način
 
-## Pred uporabo v živo — pomembno
+Sistem je nastavljen kot **demo** (`DEMO = true` v `rezervacije.js`):
+
+- ob prvem obisku in vsak nov dan se samodejno naloži sveže primere rezervacij za naslednjih 7 dni, zato je razpored vedno poln;
+- na strani za goste je trak »DEMO«, v pogledu osebja gumb **Ponastavi demo**;
+- vse ostane v brskalniku obiskovalca — nič se ne pošlje restavraciji.
+
+## Vgradnja v spletno stran restavracije
+
+Dodajte `?embed=1` in stran vstavite v `<iframe>` — skrije glavo, naslovni del in nogo. Stran sporoči svojo višino (`postMessage`), da se okvir prilagodi. Delujoč primer s kodo za kopiranje je v `vgradnja.html`.
+
+Lahko pa na strani restavracije preprosto dodate gumb, ki vodi na `/rezervacije/`.
+
+## Za pravo uporabo (ni del dema)
 
 Ta različica **hrani podatke v `localStorage` brskalnika**. Rezervacija gosta z njegovega telefona zato *ne* pride do računalnika v restavraciji. Za pravo uporabo je treba:
 

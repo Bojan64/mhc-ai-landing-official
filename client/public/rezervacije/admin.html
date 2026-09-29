@@ -143,7 +143,7 @@ table.res tr.past td{opacity:.55}
   </div>
 </header>
 
-<div class="warn"><div><strong>Opomba:</strong> ta različica shranjuje podatke v brskalnik te naprave in nima prijave. Pred uporabo v živo jo povežite s strežnikom in zaščitite z geslom — navodila so v datoteki <span class="mono">README.md</span>.</div></div>
+<div class="warn"><div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span><strong>Demo.</strong> Rezervacije so izmišljeni primeri in se shranjujejo samo v tem brskalniku. Preizkusite vse — nič ne gre nikamor.</span><button type="button" class="btn btn-ghost btn-sm" id="demo-reset" style="margin-left:auto">Ponastavi demo</button></div></div>
 
 <!-- DNEVNI PREGLED -->
 <div class="wrap" id="tab-day">
@@ -245,8 +245,8 @@ table.res tr.past td{opacity:.55}
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <button type="submit" class="btn btn-primary">Shrani nastavitve</button>
         <span style="margin-left:auto"></span>
-        <button type="button" class="btn btn-ghost" id="seed">Naloži demo rezervacije</button>
-        <button type="button" class="btn btn-danger" id="reset">Izbriši vse podatke</button>
+        <button type="button" class="btn btn-ghost" id="seed">Dodaj še demo rezervacij</button>
+        <button type="button" class="btn btn-danger" id="reset">Ponastavi demo</button>
       </div>
     </div>
   </form>
@@ -609,7 +609,10 @@ table.res tr.past td{opacity:.55}
   });
   $("#seed").addEventListener("click", function () { var n = RS.seedDemo(); toast("Dodanih " + n + " demo rezervacij za naslednjih 7 dni."); });
   $("#reset").addEventListener("click", function () {
-    if (confirm("Izbrišem VSE rezervacije in nastavitve na tej napravi? Tega ni mogoče razveljaviti.")) { RS.resetAll(); fillSettings(); toast("Vsi podatki izbrisani."); }
+    if (confirm("Ponastavim demo? Vaše spremembe in vnesene rezervacije bodo izbrisane.")) { RS.resetDemo(); fillSettings(); toast("Demo ponastavljen."); }
+  });
+  $("#demo-reset").addEventListener("click", function () {
+    if (confirm("Ponastavim demo? Vaše spremembe in vnesene rezervacije bodo izbrisane.")) { RS.resetDemo(); setDay(RS.today()); toast("Demo ponastavljen."); }
   });
 
   RS.subscribe(render);

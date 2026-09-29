@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Primer vgradnje</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="rezervacije.css">
+<style>
+.wrap{max-width:1000px;margin:0 auto;padding:40px 16px}
+h1{font-family:var(--display);font-size:40px;font-weight:600;color:var(--black)}
+p{color:var(--soft);margin:8px 0 18px}
+pre{background:#F7F6F2;border:1px solid var(--rule);border-radius:10px;padding:14px;overflow:auto;font-size:13px;margin-bottom:28px}
+iframe{width:100%;border:0;min-height:900px;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Primer: obrazec na strani restavracije</h1>
+  <p>Spodnjo kodo prilepite na stran restavracije (npr. podstran »Rezervacije«). Pot v <code>src</code> prilagodite svoji domeni. Višina okvirja se prilagodi sama.</p>
+<pre>&lt;iframe id="rezervacije" src="/rezervacije/?embed=1" title="Rezervacija mize"
+        style="width:100%;border:0;min-height:900px"&gt;&lt;/iframe&gt;
+&lt;script&gt;
+  window.addEventListener("message", function (e) {
+    if (e.data &amp;&amp; e.data.type === "rezervacije:height")
+      document.getElementById("rezervacije").style.height = e.data.height + "px";
+  });
+&lt;/script&gt;</pre>
+  <iframe id="rezervacije" src="./?embed=1" title="Rezervacija mize"></iframe>
+</div>
+<script>
+  window.addEventListener("message", function (e) {
+    if (e.data && e.data.type === "rezervacije:height")
+      document.getElementById("rezervacije").style.height = e.data.height + "px";
+  });
+</script>
+</body>
+</html>

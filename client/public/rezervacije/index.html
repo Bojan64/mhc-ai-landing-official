@@ -146,10 +146,20 @@ main{max-width:1120px;margin:0 auto;padding:12px 24px 72px}
 .found dt{color:var(--mute);font-weight:700}
 @media (max-width:820px){.manage{grid-template-columns:1fr}}
 
+.demo-strip{background:var(--navy);color:var(--white);text-align:center;font-size:13px;padding:7px 16px;font-weight:600}
+.demo-strip b{color:var(--gold-lt)}
+.demo-strip a{color:var(--gold-lt);border-bottom-color:rgba(217,190,126,.5);margin-left:6px}
+/* način za vgradnjo v spletno stran restavracije (?embed=1) */
+html.embed header.top,html.embed .hero,html.embed footer{display:none}
+html.embed main{padding-top:16px;padding-bottom:24px}
+html.embed .info,html.embed .manage{margin-top:32px}
 footer{border-top:1px solid var(--rule);padding:22px 24px;text-align:center;font-size:13.5px;color:var(--mute)}
 </style>
 </head>
 <body>
+<script>if (/[?&]embed=1\b/.test(location.search)) document.documentElement.classList.add("embed");</script>
+
+<div class="demo-strip"><b>DEMO</b> · Rezervacije niso prave in se ne pošljejo restavraciji. <a href="admin.html" target="_top">Poglejte pogled osebja →</a></div>
 
 <header class="top">
   <div class="in">
@@ -549,6 +559,13 @@ footer{border-top:1px solid var(--rule);padding:22px 24px;text-align:center;font
   });
 
   RS.subscribe(function () { paintSettings(); renderParty(); renderCal(); if (!$('[data-panel="2"]').hidden) renderSlots(); summary(); });
+
+  // Vgrajeno v iframe: sporoči višino nadrejeni strani, da se okvir prilagodi vsebini.
+  if (document.documentElement.classList.contains("embed") && window.parent !== window && "ResizeObserver" in window) {
+    new ResizeObserver(function () {
+      window.parent.postMessage({ type: "rezervacije:height", height: document.documentElement.scrollHeight }, "*");
+    }).observe(document.body);
+  }
 
   paintSettings(); renderParty(); renderCal(); summary(); go(1);
 })();
