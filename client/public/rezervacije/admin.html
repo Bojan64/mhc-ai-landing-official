@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Rezervacije — osebje</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="rezervacije.css">
+<style>
+body{font-size:15px}
+.bar{position:sticky;top:0;z-index:50;background:var(--navy);color:var(--white);box-shadow:0 6px 24px -12px rgba(22,32,64,.8)}
+.bar .in{max-width:1400px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.bar .brand{font-family:var(--display);font-size:22px;font-weight:700;letter-spacing:.02em;margin-right:auto}
+.bar .brand small{font-family:var(--body);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold-lt);font-weight:800;margin-left:10px}
+.tabs{display:flex;gap:4px;background:rgba(255,255,255,.08);padding:4px;border-radius:10px}
+.tabs button{border:0;background:transparent;color:rgba(255,255,255,.75);padding:7px 14px;border-radius:7px;font-weight:700;font-size:14px}
+.tabs button[aria-selected="true"]{background:var(--white);color:var(--navy)}
+.bar a{color:var(--gold-lt);border-bottom-color:rgba(217,190,126,.45);font-size:14px}
+
+.warn{max-width:1400px;margin:14px auto 0;padding:0 20px}
+.warn div{background:var(--warn-wash);color:var(--warn);border:1px solid rgba(138,90,11,.2);border-radius:10px;padding:10px 14px;font-size:13.5px}
+
+.wrap{max-width:1400px;margin:0 auto;padding:18px 20px 60px}
+.dayhead{position:relative;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:22px 0 18px}
+.dayhead::before{content:"";position:absolute;inset:-40px -20px auto -20px;height:200px;z-index:-1;pointer-events:none;
+  background:radial-gradient(600px 180px at 30% 0%,rgba(180,148,72,.16),transparent 70%)}
+.dayhead h1{font-family:var(--display);font-size:clamp(30px,4vw,44px);font-weight:600;line-height:1;color:var(--black);margin-right:auto}
+.dayhead h1 small{display:block;font-family:var(--body);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:800;margin-bottom:6px}
+.dnav{display:flex;gap:6px;align-items:center}
+.dnav .input{width:auto;padding:.5em .7em}
+
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--rule);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);background:var(--white)}
+.kpi{padding:16px 18px}
+.kpi+.kpi{border-left:1px solid var(--rule-2)}
+.kpi .v{font-family:var(--display);font-size:38px;font-weight:600;line-height:1;color:var(--black);font-variant-numeric:lining-nums tabular-nums}
+.kpi .v small{font-family:var(--body);font-size:14px;color:var(--mute);font-weight:700;margin-left:4px}
+.kpi .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);font-weight:800;margin-top:6px}
+.meter{height:6px;background:var(--rule-2);border-radius:99px;margin-top:10px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--gold);border-radius:99px}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi+.kpi{border-left:0}.kpi{border-bottom:1px solid var(--rule-2)}}
+
+/* časovnica — mize × ure */
+.board{margin-top:22px;background:var(--white);border:1px solid var(--rule);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.board-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--rule-2);flex-wrap:wrap}
+.board-head h2,.list-head h2{font-family:var(--display);font-size:24px;font-weight:600;color:var(--black)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12.5px;color:var(--soft)}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+.scroller{overflow-x:auto}
+.tl{position:relative;min-width:900px}
+.tl-row{display:grid;grid-template-columns:120px 1fr;border-bottom:1px solid var(--rule-2);min-height:44px}
+.tl-row:last-child{border-bottom:0}
+.tl-row.zone{min-height:0;background:#FAFAF7}
+.tl-row.zone .tl-lab{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);font-weight:800;padding:6px 14px}
+.tl-lab{padding:10px 14px;font-weight:800;display:flex;align-items:center;gap:8px;border-right:1px solid var(--rule-2);position:sticky;left:0;background:inherit;z-index:2;background:var(--white)}
+.tl-row.zone .tl-lab{background:#FAFAF7}
+.tl-lab small{font-weight:700;color:var(--mute);font-size:12px}
+.tl-track{position:relative}
+.tl-hours{display:grid;grid-template-columns:120px 1fr;border-bottom:1px solid var(--rule)}
+.tl-hours .tl-track{height:30px}
+.tl-hours b{position:absolute;top:8px;font-size:11.5px;color:var(--mute);font-weight:800;transform:translateX(-50%);font-variant-numeric:tabular-nums}
+.gridline{position:absolute;top:0;bottom:0;border-left:1px solid var(--rule-2)}
+.closed-band{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(135deg,#F6F6F6 0 6px,#FFF 6px 12px)}
+.blk{position:absolute;top:5px;bottom:5px;border-radius:7px;padding:3px 8px;font-size:12px;line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border:0;text-align:left;
+  color:var(--white);background:var(--navy);box-shadow:0 4px 10px -6px rgba(22,32,64,.8);display:flex;flex-direction:column;justify-content:center}
+.blk b{font-weight:800;overflow:hidden;text-overflow:ellipsis}
+.blk span{opacity:.8;font-size:11px}
+.blk:hover{filter:brightness(1.12);z-index:3}
+.blk.cakajoca{background:#C7922B;color:var(--black)}
+.blk.prispeli{background:var(--ok)}
+.blk.zakljucena{background:#CFCFCF;color:#333;box-shadow:none}
+.blk.flag::after{content:"";position:absolute;top:5px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--gold-lt)}
+.now{position:absolute;top:0;bottom:0;width:2px;background:#D0463B;z-index:4;pointer-events:none}
+.now::before{content:"";position:absolute;top:-1px;left:-4px;width:10px;height:10px;border-radius:50%;background:#D0463B}
+
+/* seznam */
+.list{margin-top:22px;background:var(--white);border:1px solid var(--rule);border-radius:14px;box-shadow:var(--shadow)}
+.list-head{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--rule-2)}
+.list-head h2{margin-right:auto}
+.list-head .input{width:auto;min-width:0;padding:.5em .7em;font-size:14px}
+table.res{width:100%;border-collapse:collapse}
+table.res th{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule-2);font-weight:800}
+table.res td{padding:12px 14px;border-bottom:1px solid var(--rule-2);vertical-align:top}
+table.res tr:last-child td{border-bottom:0}
+table.res tr:hover td{background:#FCFBF7}
+table.res tr.past td{opacity:.55}
+.t-time{font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}
+.t-name{font-weight:800}
+.t-name button{border:0;background:none;font-weight:800;padding:0;text-align:left;border-bottom:1px dashed var(--gold)}
+.t-meta{font-size:13px;color:var(--mute)}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.tag{font-size:11.5px;font-weight:800;padding:2px 8px;border-radius:6px;background:var(--gold-wash);color:#6E5620}
+.tag.al{background:var(--bad-wash);color:var(--bad)}
+.row-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.nores{padding:40px 20px;text-align:center;color:var(--soft)}
+@media (max-width:760px){
+  table.res thead{display:none}
+  table.res tr{display:grid;grid-template-columns:70px 1fr;padding:10px 6px;border-bottom:1px solid var(--rule-2)}
+  table.res td{border:0;padding:4px 8px}
+  table.res td.c-act{grid-column:1/-1}
+  table.res td.c-tab,table.res td.c-st{grid-column:2}
+  .row-actions{justify-content:flex-start}
+}
+
+/* nastavitve */
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:22px;padding-top:22px}
+.card{background:var(--white);border:1px solid var(--rule);border-radius:14px;box-shadow:var(--shadow);padding:22px;display:grid;gap:14px;align-content:start}
+.card h2{font-family:var(--display);font-size:26px;font-weight:600;color:var(--black)}
+.card .span{grid-column:1/-1}
+.hours-row{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--rule-2)}
+.hours-row:last-child{border-bottom:0}
+.hours-row .periods{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hours-row input[type=time]{width:auto;padding:.4em .5em;font-size:14px}
+.tables-ed{width:100%;border-collapse:collapse}
+.tables-ed td,.tables-ed th{padding:6px 4px;text-align:left}
+.tables-ed th{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+.tables-ed .input{padding:.45em .6em;font-size:14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;gap:6px;align-items:center;background:var(--rule-2);border-radius:99px;padding:4px 6px 4px 12px;font-size:13px;font-weight:700}
+.chip button{border:0;background:var(--white);border-radius:50%;width:20px;height:20px;line-height:1}
+@media (max-width:900px){.settings{grid-template-columns:1fr}}
+
+.tbl-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px}
+.tbl-pick label{display:flex;gap:8px;align-items:center;border:1px solid var(--rule);border-radius:8px;padding:7px 10px;font-size:13.5px;font-weight:700}
+.tbl-pick label.busy{background:var(--bad-wash);border-color:rgba(155,44,44,.25);color:var(--bad)}
+.tbl-pick input{accent-color:var(--navy)}
+.history{font-size:12.5px;color:var(--mute);display:grid;gap:3px;max-height:110px;overflow:auto}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="in">
+    <div class="brand"><span id="rname"></span><small>Rezervacije</small></div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="day">Dnevni pregled</button>
+      <button role="tab" aria-selected="false" data-tab="settings">Nastavitve</button>
+    </div>
+    <a href="./" target="_blank" rel="noopener">Stran za goste ↗</a>
+  </div>
+</header>
+
+<div class="warn"><div><strong>Opomba:</strong> ta različica shranjuje podatke v brskalnik te naprave in nima prijave. Pred uporabo v živo jo povežite s strežnikom in zaščitite z geslom — navodila so v datoteki <span class="mono">README.md</span>.</div></div>
+
+<!-- DNEVNI PREGLED -->
+<div class="wrap" id="tab-day">
+  <div class="dayhead">
+    <h1><small id="d-rel"></small><span id="d-title"></span></h1>
+    <div class="dnav">
+      <button class="btn btn-ghost btn-sm" id="d-prev" aria-label="Prejšnji dan">‹</button>
+      <button class="btn btn-ghost btn-sm" id="d-today">Danes</button>
+      <button class="btn btn-ghost btn-sm" id="d-next" aria-label="Naslednji dan">›</button>
+      <label class="sr-only" for="d-pick">Izberi datum</label>
+      <input type="date" class="input" id="d-pick">
+    </div>
+    <button class="btn btn-primary" id="new-res">+ Nova rezervacija</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <section class="board" aria-label="Razpored miz">
+    <div class="board-head">
+      <h2>Razpored miz</h2>
+      <div class="legend">
+        <span><i style="background:var(--navy)"></i>Potrjena</span>
+        <span><i style="background:#C7922B"></i>Čaka potrditev</span>
+        <span><i style="background:var(--ok)"></i>Za mizo</span>
+        <span><i style="background:#CFCFCF"></i>Zaključena</span>
+        <span><i style="background:var(--gold-lt);border-radius:50%"></i>Alergije / priložnost</span>
+      </div>
+    </div>
+    <div class="scroller"><div class="tl" id="tl"></div></div>
+  </section>
+
+  <section class="list" aria-label="Seznam rezervacij">
+    <div class="list-head">
+      <h2>Seznam</h2>
+      <label class="sr-only" for="q">Iskanje</label>
+      <input class="input" id="q" placeholder="Išči ime, telefon, kodo">
+      <label class="sr-only" for="f-status">Status</label>
+      <select class="input" id="f-status">
+        <option value="aktivne">Aktivne</option>
+        <option value="vse">Vse</option>
+        <option value="cakajoca">Čaka potrditev</option>
+        <option value="preklicana">Preklicane</option>
+        <option value="noshow">Niso prišli</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" id="print">Natisni</button>
+      <button class="btn btn-ghost btn-sm" id="csv">Izvozi CSV</button>
+    </div>
+    <div id="list"></div>
+  </section>
+</div>
+
+<!-- NASTAVITVE -->
+<div class="wrap" id="tab-settings" hidden>
+  <form id="set-form" class="settings" novalidate>
+    <div class="card">
+      <h2>Restavracija</h2>
+      <div class="field"><label for="s-name">Ime</label><input class="input" id="s-name" data-k="name"></div>
+      <div class="field"><label for="s-tagline">Podnaslov</label><input class="input" id="s-tagline" data-k="tagline"></div>
+      <div class="field"><label for="s-address">Naslov</label><input class="input" id="s-address" data-k="address"></div>
+      <div class="grid-2">
+        <div class="field"><label for="s-phone">Telefon</label><input class="input" id="s-phone" data-k="phone"></div>
+        <div class="field"><label for="s-email">E-pošta</label><input class="input" id="s-email" data-k="email"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Pravila rezervacij</h2>
+      <div class="grid-2">
+        <div class="field"><label for="s-dur">Trajanje obiska (min)</label><input class="input" type="number" min="30" step="15" id="s-dur" data-k="durationMinutes" data-num></div>
+        <div class="field"><label for="s-slot">Razmik terminov (min)</label><select class="input" id="s-slot" data-k="slotMinutes" data-num><option>15</option><option>30</option><option>60</option></select></div>
+        <div class="field"><label for="s-bigfrom">Velika skupina od (oseb)</label><input class="input" type="number" min="2" id="s-bigfrom" data-k="bigPartyFrom" data-num></div>
+        <div class="field"><label for="s-bigdur">Trajanje za veliko skupino (min)</label><input class="input" type="number" min="30" step="15" id="s-bigdur" data-k="bigPartyDuration" data-num></div>
+        <div class="field"><label for="s-maxp">Največ oseb na spletu</label><input class="input" type="number" min="1" max="20" id="s-maxp" data-k="maxOnlineParty" data-num></div>
+        <div class="field"><label for="s-cov">Največ gostov na termin</label><input class="input" type="number" min="1" id="s-cov" data-k="maxCoversPerSlot" data-num><span class="hint">Omeji naval na kuhinjo ob istem času.</span></div>
+        <div class="field"><label for="s-lead">Najmanj vnaprej (min)</label><input class="input" type="number" min="0" step="15" id="s-lead" data-k="leadMinutes" data-num></div>
+        <div class="field"><label for="s-win">Največ vnaprej (dni)</label><input class="input" type="number" min="1" id="s-win" data-k="windowDays" data-num></div>
+        <div class="field"><label for="s-cancel">Preklic gosta do (ur prej)</label><input class="input" type="number" min="0" id="s-cancel" data-k="cancelHours" data-num></div>
+      </div>
+      <label class="check"><input type="checkbox" id="s-auto" data-k="autoConfirm" data-bool><span>Spletne rezervacije potrdi samodejno (sicer čakajo na potrditev osebja).</span></label>
+    </div>
+
+    <div class="card">
+      <h2>Odpiralni čas</h2>
+      <p class="hint">Do dve izmeni na dan. Prazen dan pomeni zaprto.</p>
+      <div id="hours-ed"></div>
+      <div class="field"><label for="s-closed">Zaprto na dan (prazniki, dopust)</label>
+        <div style="display:flex;gap:8px"><input class="input" type="date" id="s-closed" style="width:auto"><button type="button" class="btn btn-ghost btn-sm" id="add-closed">Dodaj</button></div>
+      </div>
+      <div class="chips" id="closed-list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Mize</h2>
+      <table class="tables-ed"><thead><tr><th>Oznaka</th><th>Sedeži</th><th>Cona</th><th></th></tr></thead><tbody id="tables-ed"></tbody></table>
+      <button type="button" class="btn btn-ghost btn-sm" id="add-table" style="justify-self:start">+ Dodaj mizo</button>
+    </div>
+
+    <div class="card span">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <button type="submit" class="btn btn-primary">Shrani nastavitve</button>
+        <span style="margin-left:auto"></span>
+        <button type="button" class="btn btn-ghost" id="seed">Naloži demo rezervacije</button>
+        <button type="button" class="btn btn-danger" id="reset">Izbriši vse podatke</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div id="modal-root"></div>
+<div class="toast-wrap" id="toasts" aria-live="polite"></div>
+
+<script src="rezervacije.js"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var esc = RS.esc;
+  var day = RS.today();
+
+  function S() { return RS.state.settings; }
+  function toast(msg, bad) {
+    var el = document.createElement("div"); el.className = "toast" + (bad ? " bad" : ""); el.textContent = msg;
+    $("#toasts").appendChild(el); setTimeout(function () { el.remove(); }, 3800);
+  }
+
+  /* ---------- zavihki ---------- */
+  $$("[data-tab]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      $$("[data-tab]").forEach(function (x) { x.setAttribute("aria-selected", x === b); });
+      $("#tab-day").hidden = b.getAttribute("data-tab") !== "day";
+      $("#tab-settings").hidden = b.getAttribute("data-tab") !== "settings";
+      if (b.getAttribute("data-tab") === "settings") fillSettings();
+    });
+  });
+
+  /* ---------- dan ---------- */
+  function setDay(ds) { day = ds; render(); }
+  $("#d-prev").addEventListener("click", function () { setDay(RS.ymd(RS.addDays(RS.parseYmd(day), -1))); });
+  $("#d-next").addEventListener("click", function () { setDay(RS.ymd(RS.addDays(RS.parseYmd(day), 1))); });
+  $("#d-today").addEventListener("click", function () { setDay(RS.today()); });
+  $("#d-pick").addEventListener("change", function (e) { if (e.target.value) setDay(e.target.value); });
+
+  function relLabel(ds) {
+    var diff = Math.round((RS.parseYmd(ds) - RS.parseYmd(RS.today())) / 864e5);
+    if (diff === 0) return "Danes"; if (diff === 1) return "Jutri"; if (diff === -1) return "Včeraj";
+    return diff > 0 ? "Čez " + diff + " dni" : "Pred " + (-diff) + " dnevi";
+  }
+
+  function render() {
+    $("#rname").textContent = S().name;
+    $("#d-title").textContent = RS.fmtDateLong(day);
+    $("#d-rel").textContent = relLabel(day) + (RS.isOpenDay(day) ? "" : " · zaprto");
+    $("#d-pick").value = day;
+    renderKpis(); renderTimeline(); renderList();
+  }
+
+  function renderKpis() {
+    var all = RS.forDay(day), load = RS.dayLoad(day);
+    var pending = all.filter(function (r) { return r.status === "cakajoca"; }).length;
+    var seated = all.filter(function (r) { return r.status === "prispeli"; }).reduce(function (a, r) { return a + r.party; }, 0);
+    var flags = all.filter(function (r) { return RS.BLOCKING[r.status] && (r.allergies || r.occasion); }).length;
+    // Zasedenost = sedežne ure rezervacij / sedežne ure odprtja.
+    var openMin = RS.periodsFor(day).reduce(function (a, p) { return a + RS.toMin(p.close) - RS.toMin(p.open); }, 0);
+    var used = all.filter(function (r) { return RS.BLOCKING[r.status] || r.status === "zakljucena"; })
+      .reduce(function (a, r) { return a + r.party * r.duration; }, 0);
+    var pct = openMin ? Math.min(100, Math.round(used / (load.capacity * openMin) * 100)) : 0;
+    $("#kpis").innerHTML = [
+      ["Rezervacij", load.count, ""],
+      ["Gostov skupaj", load.covers, ""],
+      ["Trenutno za mizo", seated, "<small>/ " + load.capacity + "</small>"],
+      ["Čaka potrditev", pending, ""],
+      ["Zasedenost dneva", pct, "<small>%</small>", '<div class="meter"><i style="width:' + pct + '%"></i></div>']
+    ].map(function (k) {
+      return '<div class="kpi"><div class="v">' + k[1] + k[2] + '</div><div class="k">' + k[0] + (k[0] === "Rezervacij" && flags ? " · " + flags + " s posebnostmi" : "") + "</div>" + (k[3] || "") + "</div>";
+    }).join("");
+  }
+
+  function renderTimeline() {
+    var periods = RS.periodsFor(day), s = S();
+    var weekday = s.hours[RS.parseYmd(day).getDay()] || [];
+    var ps = periods.length ? periods : weekday;
+    var start = ps.length ? Math.min.apply(null, ps.map(function (p) { return RS.toMin(p.open); })) : 12 * 60;
+    var end = ps.length ? Math.max.apply(null, ps.map(function (p) { return RS.toMin(p.close); })) : 23 * 60;
+    start = Math.floor(start / 60) * 60; end = Math.ceil(end / 60) * 60;
+    var span = end - start;
+    function x(m) { return ((m - start) / span * 100).toFixed(3) + "%"; }
+
+    var grid = "", hours = "";
+    for (var h = start; h <= end; h += 60) {
+      grid += '<div class="gridline" style="left:' + x(h) + '"></div>';
+      if (h < end) hours += "<b style=\"left:" + x(h) + (h === start ? ";transform:translateX(4px)" : "") + '">' + RS.fromMin(h) + "</b>";
+    }
+    // zaprti pasovi (med izmenama)
+    var closed = "", cur = start;
+    periods.slice().sort(function (a, b) { return RS.toMin(a.open) - RS.toMin(b.open); }).forEach(function (p) {
+      if (RS.toMin(p.open) > cur) closed += '<div class="closed-band" style="left:' + x(cur) + ";width:calc(" + x(RS.toMin(p.open)) + " - " + x(cur) + ')"></div>';
+      cur = Math.max(cur, RS.toMin(p.close));
+    });
+    if (cur < end) closed += '<div class="closed-band" style="left:' + x(cur) + ";width:calc(" + x(end) + " - " + x(cur) + ')"></div>';
+    if (!periods.length) closed = '<div class="closed-band" style="left:0;width:100%"></div>';
+
+    var res = RS.forDay(day).filter(function (r) { return RS.BLOCKING[r.status] || r.status === "zakljucena"; });
+    var html = '<div class="tl-hours"><div class="tl-lab" style="border-right:1px solid var(--rule-2)"></div><div class="tl-track">' + hours + "</div></div>";
+    var zones = [];
+    s.tables.forEach(function (t) { if (zones.indexOf(t.zone) === -1) zones.push(t.zone); });
+    zones.forEach(function (z) {
+      html += '<div class="tl-row zone"><div class="tl-lab">' + esc(z) + '</div><div class="tl-track"></div></div>';
+      s.tables.filter(function (t) { return t.zone === z; }).forEach(function (t) {
+        var blocks = res.filter(function (r) { return (r.tableIds || []).indexOf(t.id) !== -1; }).map(function (r) {
+          var a = RS.toMin(r.time), b = a + r.duration;
+          return '<button class="blk ' + r.status + (r.allergies || r.occasion ? " flag" : "") + '" data-open="' + r.id + '" style="left:' + x(a) + ";width:calc(" + x(b) + " - " + x(a) + ' - 3px)" title="' +
+            esc(r.time + " · " + r.name + " · " + r.party + " os." + (r.allergies ? " · alergije: " + r.allergies : "") + (r.occasion ? " · " + r.occasion : "")) + '"><b>' + esc(r.name) + "</b><span>" + r.time + " · " + r.party + " os.</span></button>";
+        }).join("");
+        html += '<div class="tl-row"><div class="tl-lab">' + esc(t.name) + " <small>" + t.seats + ' os.</small></div><div class="tl-track">' + closed + grid + blocks + "</div></div>";
+      });
+    });
+    $("#tl").innerHTML = html;
+    if (day === RS.today()) {
+      var n = RS.nowMin();
+      if (n > start && n < end) {
+        var line = document.createElement("div"); line.className = "now";
+        line.style.left = "calc(120px + (100% - 120px) * " + ((n - start) / span).toFixed(4) + ")";
+        $("#tl").appendChild(line);
+      }
+    }
+  }
+
+  function renderList() {
+    var q = $("#q").value.trim().toLowerCase(), f = $("#f-status").value;
+    var rows = RS.forDay(day).filter(function (r) {
+      if (f === "aktivne" && !(RS.BLOCKING[r.status] || r.status === "zakljucena")) return false;
+      if (f !== "aktivne" && f !== "vse" && r.status !== f) return false;
+      if (q && (r.name + " " + r.phone + " " + r.code + " " + r.email).toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+    if (!rows.length) { $("#list").innerHTML = '<div class="nores">Za ta dan ni rezervacij' + (q || f !== "aktivne" ? " s temi pogoji" : "") + ".</div>"; return; }
+    var isToday = day === RS.today(), n = RS.nowMin();
+    $("#list").innerHTML = '<table class="res"><thead><tr><th>Ura</th><th>Gost</th><th>Miza</th><th>Status</th><th style="text-align:right">Dejanja</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        var st = RS.STATUS[r.status];
+        var past = isToday && RS.toMin(r.time) + r.duration < n && r.status !== "prispeli";
+        var acts = [];
+        if (r.status === "cakajoca") acts.push(["potrjena", "Potrdi", "btn-gold"]);
+        if (r.status === "potrjena" || r.status === "cakajoca") { acts.push(["prispeli", "Prišli", "btn-primary"]); acts.push(["noshow", "Ni prišel", "btn-ghost"]); }
+        if (r.status === "prispeli") acts.push(["zakljucena", "Zaključi", "btn-primary"]);
+        if (!RS.BLOCKING[r.status]) acts.push(["potrjena", "Obnovi", "btn-ghost"]);
+        var tags = [];
+        if (r.occasion) tags.push('<span class="tag">' + esc(r.occasion) + "</span>");
+        if (r.allergies) tags.push('<span class="tag al">' + esc(r.allergies) + "</span>");
+        if (r.notes) tags.push('<span class="tag" style="background:var(--rule-2);color:var(--soft)">' + esc(r.notes) + "</span>");
+        return '<tr class="' + (past ? "past" : "") + '"><td class="t-time">' + r.time + '<div class="t-meta">' + r.party + ' os.</div></td>' +
+          '<td><div class="t-name"><button data-open="' + r.id + '">' + esc(r.name) + '</button></div><div class="t-meta"><a href="tel:' + esc(r.phone.replace(/[^\d+]/g, "")) + '" style="border:0;font-weight:600;color:inherit">' + esc(r.phone) + "</a> · <span class=\"mono\">" + r.code + "</span> · " + esc(r.source) + '</div><div class="tags">' + tags.join("") + "</div></td>" +
+          '<td class="c-tab">' + ((r.tableIds || []).length ? (r.tableIds || []).map(RS.tableName).join(" + ") : '<span class="err">brez mize</span>') + "</td>" +
+          '<td class="c-st"><span class="pill ' + st.cls + '">' + st.label + "</span></td>" +
+          '<td class="c-act"><div class="row-actions">' + acts.map(function (a) { return '<button class="btn btn-sm ' + a[2] + '" data-st="' + a[0] + '" data-id="' + r.id + '">' + a[1] + "</button>"; }).join("") + "</div></td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  $("#q").addEventListener("input", renderList);
+  $("#f-status").addEventListener("change", renderList);
+  document.addEventListener("click", function (e) {
+    var o = e.target.closest("[data-open]"); if (o) { openModal(RS.get(o.getAttribute("data-open"))); return; }
+    var b = e.target.closest("[data-st]");
+    if (b) { RS.setStatus(b.getAttribute("data-id"), b.getAttribute("data-st")); toast("Status: " + RS.STATUS[b.getAttribute("data-st")].label); }
+  });
+  $("#csv").addEventListener("click", function () {
+    RS.download("rezervacije-" + day + ".csv", RS.toCSV(RS.forDay(day)), "text/csv;charset=utf-8");
+  });
+  $("#print").addEventListener("click", function () { window.print(); });
+  $("#new-res").addEventListener("click", function () { openModal(null); });
+
+  /* ---------- modal: nova / urejanje ---------- */
+  function openModal(r) {
+    var isNew = !r, s = S();
+    var d = r || { date: day, time: "", party: 2, name: "", phone: "", email: "", notes: "", allergies: "", occasion: "", tableIds: [], status: "potrjena", source: "telefon" };
+    var root = $("#modal-root"), prevFocus = document.activeElement;
+    root.innerHTML =
+      '<div class="modal-back" id="mb"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">' +
+      '<div class="modal-head"><div><h2 id="m-title">' + (isNew ? "Nova rezervacija" : esc(d.name)) + "</h2>" + (isNew ? "" : '<div class="t-meta">Koda <span class="mono">' + d.code + "</span> · " + esc(d.source) + "</div>") + '</div><button class="x" id="m-x" aria-label="Zapri">×</button></div>' +
+      '<form class="modal-body" id="m-form" novalidate>' +
+      '<div class="grid-2">' +
+      '<div class="field"><label for="m-date">Datum</label><input class="input" type="date" id="m-date" value="' + d.date + '"></div>' +
+      '<div class="field"><label for="m-party">Osebe</label><input class="input" type="number" min="1" max="40" id="m-party" value="' + d.party + '"></div>' +
+      '<div class="field"><label for="m-time">Ura</label><select class="input" id="m-time"></select></div>' +
+      '<div class="field"><label for="m-status">Status</label><select class="input" id="m-status">' + Object.keys(RS.STATUS).map(function (k) { return '<option value="' + k + '"' + (k === d.status ? " selected" : "") + ">" + RS.STATUS[k].label + "</option>"; }).join("") + "</select></div>" +
+      "</div>" +
+      '<div class="field"><span class="label">Mize <span class="hint" style="text-transform:none;letter-spacing:0;font-weight:600">— rdeče so v tem času zasedene</span></span><div class="tbl-pick" id="m-tables"></div><span class="err" id="m-tables-err"></span></div>' +
+      '<div class="grid-2">' +
+      '<div class="field"><label for="m-name">Ime in priimek</label><input class="input" id="m-name" value="' + esc(d.name) + '"><span class="err" data-merr="name"></span></div>' +
+      '<div class="field"><label for="m-phone">Telefon</label><input class="input" type="tel" id="m-phone" value="' + esc(d.phone) + '"><span class="err" data-merr="phone"></span></div>' +
+      '<div class="field"><label for="m-email">E-pošta</label><input class="input" type="email" id="m-email" value="' + esc(d.email) + '"><span class="err" data-merr="email"></span></div>' +
+      '<div class="field"><label for="m-source">Vir</label><select class="input" id="m-source">' + ["telefon", "splet", "walk-in", "e-pošta"].map(function (v) { return "<option" + (v === d.source ? " selected" : "") + ">" + v + "</option>"; }).join("") + "</select></div>" +
+      '<div class="field"><label for="m-occ">Priložnost</label><input class="input" id="m-occ" value="' + esc(d.occasion) + '"></div>' +
+      '<div class="field"><label for="m-all">Alergije</label><input class="input" id="m-all" value="' + esc(d.allergies) + '"></div>' +
+      "</div>" +
+      '<div class="field"><label for="m-notes">Opombe</label><textarea class="input" id="m-notes">' + esc(d.notes) + "</textarea></div>" +
+      (isNew ? "" : '<div class="field"><span class="label">Zgodovina</span><div class="history">' + (d.history || []).map(function (h) { return "<div>" + new Date(h.at).toLocaleString("sl-SI") + " — " + esc(h.what) + "</div>"; }).join("") + "</div></div>") +
+      "</form>" +
+      '<div class="modal-foot">' + (isNew ? "" : '<button class="btn btn-danger" id="m-del" style="margin-right:auto">Izbriši</button>') +
+      '<button class="btn btn-ghost" id="m-cancel">Prekliči</button><button class="btn btn-primary" id="m-save">' + (isNew ? "Ustvari rezervacijo" : "Shrani") + "</button></div></div></div>";
+
+    var chosen = (d.tableIds || []).slice(), touchedTables = !isNew;
+
+    function fillTimes() {
+      var date = $("#m-date").value, party = +$("#m-party").value || 2;
+      var times = RS.slotTimes(date, party).map(RS.fromMin);
+      if (d.time && times.indexOf(d.time) === -1) times.unshift(d.time);
+      if (!times.length) times = []; // zaprto — dovoli ročni vnos spodaj
+      var cur = $("#m-time").value || d.time || (isNew && date === RS.today() ? nextSlot(times) : times[0]);
+      $("#m-time").innerHTML = times.length ? times.map(function (t) { return "<option" + (t === cur ? " selected" : "") + ">" + t + "</option>"; }).join("") : '<option value="">Zaprto</option>';
+    }
+    function nextSlot(times) { var n = RS.nowMin(); return times.filter(function (t) { return RS.toMin(t) >= n; })[0] || times[0]; }
+    function fillTables() {
+      var date = $("#m-date").value, time = $("#m-time").value, party = +$("#m-party").value || 2;
+      if (!time) { $("#m-tables").innerHTML = '<span class="hint">Restavracija je ta dan zaprta.</span>'; return; }
+      var busy = RS.busyTables(date, RS.toMin(time), RS.durationFor(party), r ? r.id : null);
+      if (!touchedTables) { chosen = RS.findTables(date, RS.toMin(time), party, r ? r.id : null) || []; }
+      $("#m-tables").innerHTML = s.tables.map(function (t) {
+        return '<label class="' + (busy[t.id] ? "busy" : "") + '"><input type="checkbox" value="' + t.id + '"' + (chosen.indexOf(t.id) !== -1 ? " checked" : "") + "> " + esc(t.name) + ' <small class="t-meta">' + t.seats + "</small></label>";
+      }).join("");
+      var seats = chosen.reduce(function (a, id) { var t = s.tables.filter(function (x) { return x.id === id; })[0]; return a + (t ? t.seats : 0); }, 0);
+      var clash = chosen.some(function (id) { return busy[id]; });
+      $("#m-tables-err").textContent = !chosen.length ? "Ni proste mize — izberite ročno ali spremenite uro." : clash ? "Izbrana miza je v tem času že zasedena." : seats < party ? "Premalo sedežev (" + seats + ") za " + party + " os." : "";
+    }
+    fillTimes(); fillTables();
+    ["#m-date", "#m-party"].forEach(function (id) { $(id).addEventListener("change", function () { fillTimes(); fillTables(); }); });
+    $("#m-time").addEventListener("change", fillTables);
+    $("#m-tables").addEventListener("change", function () {
+      touchedTables = true;
+      chosen = $$("#m-tables input:checked").map(function (i) { return i.value; }); fillTables();
+    });
+
+    function close() { root.innerHTML = ""; document.removeEventListener("keydown", onKey); if (prevFocus) prevFocus.focus(); }
+    function onKey(e) {
+      if (e.key === "Escape") close();
+      if (e.key === "Tab") { // ujemi fokus v dialogu
+        var f = $$("#mb button, #mb input, #mb select, #mb textarea"); if (!f.length) return;
+        if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    $("#mb").addEventListener("mousedown", function (e) { if (e.target.id === "mb") close(); });
+    $("#m-x").addEventListener("click", close);
+    $("#m-cancel").addEventListener("click", close);
+    if (!isNew) $("#m-del").addEventListener("click", function () {
+      if (confirm("Trajno izbrišem rezervacijo " + d.code + "? Za običajen preklic raje nastavite status »Preklicana«.")) { RS.remove(d.id); close(); toast("Rezervacija izbrisana."); }
+    });
+    $("#m-save").addEventListener("click", function () {
+      var data = {
+        date: $("#m-date").value, time: $("#m-time").value, party: +$("#m-party").value,
+        name: $("#m-name").value, phone: $("#m-phone").value, email: $("#m-email").value,
+        notes: $("#m-notes").value, allergies: $("#m-all").value, occasion: $("#m-occ").value,
+        source: $("#m-source").value, status: $("#m-status").value, tableIds: chosen.slice()
+      };
+      var errs = RS.validateGuest(data);
+      ["name", "phone", "email"].forEach(function (k) { $('[data-merr="' + k + '"]').textContent = errs[k] || ""; $("#m-" + k).setAttribute("aria-invalid", errs[k] ? "true" : "false"); });
+      if (!data.date || !data.time) { toast("Izberite datum in uro.", true); return; }
+      if (Object.keys(errs).length) return;
+      var warn = $("#m-tables-err").textContent;
+      if (warn && !confirm(warn + "\n\nVseeno shranim?")) return;
+      if (isNew) {
+        var out = RS.create(data, { staff: true, force: true });
+        if (out.error) { toast(out.error, true); return; }
+        toast("Rezervacija ustvarjena · koda " + out.reservation.code);
+        if (data.date !== day) setDay(data.date);
+      } else {
+        RS.update(d.id, {
+          date: data.date, time: data.time, party: data.party, name: data.name.trim(), phone: data.phone.trim(), email: data.email.trim(),
+          notes: data.notes.trim(), allergies: data.allergies.trim(), occasion: data.occasion.trim(), source: data.source, status: data.status, tableIds: data.tableIds
+        }, "Urejeno (osebje)");
+        toast("Spremembe shranjene.");
+      }
+      close();
+    });
+    $("#m-name").focus();
+  }
+
+  /* ---------- nastavitve ---------- */
+  var draft = null;
+  function fillSettings() {
+    draft = JSON.parse(JSON.stringify(S()));
+    $$("[data-k]").forEach(function (el) {
+      var v = draft[el.getAttribute("data-k")];
+      if (el.hasAttribute("data-bool")) el.checked = !!v; else el.value = v;
+    });
+    renderHoursEd(); renderClosed(); renderTablesEd();
+  }
+  function renderHoursEd() {
+    $("#hours-ed").innerHTML = [1, 2, 3, 4, 5, 6, 0].map(function (dnum) {
+      var p = draft.hours[dnum] || [];
+      function pair(i) {
+        var x = p[i] || { open: "", close: "" };
+        return '<span><input class="input" type="time" aria-label="' + RS.DAYS[dnum] + " izmena " + (i + 1) + ' od" data-h="' + dnum + '" data-i="' + i + '" data-f="open" value="' + x.open + '"> – ' +
+          '<input class="input" type="time" aria-label="' + RS.DAYS[dnum] + " izmena " + (i + 1) + ' do" data-h="' + dnum + '" data-i="' + i + '" data-f="close" value="' + x.close + '"></span>';
+      }
+      return '<div class="hours-row"><strong>' + RS.DAYS[dnum] + '</strong><div class="periods">' + pair(0) + pair(1) + "</div></div>";
+    }).join("");
+  }
+  function readHours() {
+    var hours = {};
+    [0, 1, 2, 3, 4, 5, 6].forEach(function (dnum) {
+      var list = [];
+      [0, 1].forEach(function (i) {
+        var o = $('[data-h="' + dnum + '"][data-i="' + i + '"][data-f="open"]').value, c = $('[data-h="' + dnum + '"][data-i="' + i + '"][data-f="close"]').value;
+        if (o && c && RS.toMin(c) > RS.toMin(o)) list.push({ open: o, close: c });
+      });
+      hours[dnum] = list.sort(function (a, b) { return RS.toMin(a.open) - RS.toMin(b.open); });
+    });
+    return hours;
+  }
+  function renderClosed() {
+    draft.closedDates.sort();
+    $("#closed-list").innerHTML = draft.closedDates.length ? draft.closedDates.map(function (ds) {
+      return '<span class="chip">' + RS.fmtDateShort(ds) + " " + ds.slice(0, 4) + ' <button type="button" data-rmclosed="' + ds + '" aria-label="Odstrani ' + ds + '">×</button></span>';
+    }).join("") : '<span class="hint">Ni dodanih zaprtih dni.</span>';
+  }
+  $("#add-closed").addEventListener("click", function () {
+    var v = $("#s-closed").value; if (v && draft.closedDates.indexOf(v) === -1) { draft.closedDates.push(v); renderClosed(); }
+  });
+  $("#closed-list").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-rmclosed]"); if (!b) return;
+    draft.closedDates = draft.closedDates.filter(function (x) { return x !== b.getAttribute("data-rmclosed"); }); renderClosed();
+  });
+  function renderTablesEd() {
+    $("#tables-ed").innerHTML = draft.tables.map(function (t, i) {
+      return '<tr><td><input class="input" aria-label="Oznaka mize" data-t="' + i + '" data-f="name" value="' + esc(t.name) + '"></td>' +
+        '<td><input class="input" type="number" min="1" max="30" aria-label="Sedeži" data-t="' + i + '" data-f="seats" value="' + t.seats + '" style="width:80px"></td>' +
+        '<td><input class="input" aria-label="Cona" data-t="' + i + '" data-f="zone" value="' + esc(t.zone) + '" list="zones"></td>' +
+        '<td><button type="button" class="x" data-rmt="' + i + '" aria-label="Odstrani mizo ' + esc(t.name) + '">×</button></td></tr>';
+    }).join("") + '<datalist id="zones">' + draft.tables.map(function (t) { return t.zone; }).filter(function (z, i, a) { return a.indexOf(z) === i; }).map(function (z) { return '<option value="' + esc(z) + '">'; }).join("") + "</datalist>";
+  }
+  $("#tables-ed").addEventListener("input", function (e) {
+    var el = e.target.closest("[data-t]"); if (!el) return;
+    var t = draft.tables[+el.getAttribute("data-t")], f = el.getAttribute("data-f");
+    t[f] = f === "seats" ? Math.max(1, +el.value || 1) : el.value;
+  });
+  $("#tables-ed").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-rmt]"); if (!b) return;
+    var t = draft.tables[+b.getAttribute("data-rmt")];
+    var used = RS.state.reservations.some(function (r) { return r.date >= RS.today() && RS.BLOCKING[r.status] && (r.tableIds || []).indexOf(t.id) !== -1; });
+    if (used && !confirm("Miza " + t.name + " ima prihodnje rezervacije. Jo vseeno odstranim?")) return;
+    draft.tables.splice(+b.getAttribute("data-rmt"), 1); renderTablesEd();
+  });
+  $("#add-table").addEventListener("click", function () {
+    var n = 1, ids = draft.tables.map(function (t) { return t.id; });
+    while (ids.indexOf("T" + n) !== -1) n++;
+    var last = draft.tables[draft.tables.length - 1];
+    draft.tables.push({ id: "T" + n, name: String(n), seats: 4, zone: last ? last.zone : "Salon" }); renderTablesEd();
+  });
+  $("#set-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var patch = { hours: readHours(), closedDates: draft.closedDates, tables: draft.tables.filter(function (t) { return String(t.name).trim(); }) };
+    $$("[data-k]").forEach(function (el) {
+      var k = el.getAttribute("data-k");
+      patch[k] = el.hasAttribute("data-bool") ? el.checked : el.hasAttribute("data-num") ? Math.max(0, +el.value || 0) : el.value.trim();
+    });
+    if (!patch.name) { toast("Vpišite ime restavracije.", true); return; }
+    if (!patch.tables.length) { toast("Dodajte vsaj eno mizo.", true); return; }
+    if (patch.slotMinutes < 5) patch.slotMinutes = 15;
+    RS.saveSettings(patch); toast("Nastavitve shranjene."); fillSettings();
+  });
+  $("#seed").addEventListener("click", function () { var n = RS.seedDemo(); toast("Dodanih " + n + " demo rezervacij za naslednjih 7 dni."); });
+  $("#reset").addEventListener("click", function () {
+    if (confirm("Izbrišem VSE rezervacije in nastavitve na tej napravi? Tega ni mogoče razveljaviti.")) { RS.resetAll(); fillSettings(); toast("Vsi podatki izbrisani."); }
+  });
+
+  RS.subscribe(render);
+  render();
+  setInterval(function () { if (day === RS.today() && !$("#tab-day").hidden) renderTimeline(); }, 60000);
+})();
+</script>
+</body>
+</html>

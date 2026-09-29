@@ -1,0 +1,83 @@
+/* Rezervacijski sistem — skupni slogi (gost + osebje) */
+:root{
+  --white:#fff; --black:#0A0A0A; --text:#141414; --soft:#4A4A4A; --mute:#6B6B6B;
+  --navy:#162040; --navy-2:#23305A; --gold:#B49448; --gold-lt:#D9BE7E; --gold-wash:rgba(180,148,72,.10);
+  --rule:rgba(10,10,10,.12); --rule-2:rgba(10,10,10,.06);
+  --ok:#2F6B45; --ok-wash:#E9F3EC; --warn:#8A5A0B; --warn-wash:#FBF1DE; --bad:#9B2C2C; --bad-wash:#F8E7E7;
+  --info:#23305A; --info-wash:#E8EBF4;
+  --display:"Cormorant Garamond",Georgia,serif; --body:"Nunito",system-ui,sans-serif;
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --r:10px; --shadow:0 1px 2px rgba(22,32,64,.06),0 10px 30px -12px rgba(22,32,64,.22);
+  --shadow-lg:0 2px 6px rgba(22,32,64,.08),0 30px 60px -24px rgba(22,32,64,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--white);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.55;min-height:100vh}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--black);font-weight:700;text-decoration:none;border-bottom:2px solid var(--gold)}
+a:hover{color:var(--gold)}
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.mono{font-family:var(--mono);font-size:.92em;letter-spacing:.02em}
+
+/* Buttons & form controls */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.5em;border:1px solid transparent;border-radius:var(--r);
+  padding:.72em 1.25em;font-weight:700;font-size:15px;line-height:1.2;transition:background .15s,border-color .15s,color .15s,box-shadow .15s;white-space:nowrap}
+.btn-primary{background:var(--navy);color:var(--white);box-shadow:0 8px 20px -10px rgba(22,32,64,.7)}
+.btn-primary:hover{background:var(--navy-2)}
+.btn-gold{background:var(--gold);color:var(--black)}
+.btn-gold:hover{background:var(--gold-lt)}
+.btn-ghost{background:var(--white);border-color:var(--rule);color:var(--text)}
+.btn-ghost:hover{border-color:var(--gold)}
+.btn-danger{background:var(--white);border-color:rgba(155,44,44,.35);color:var(--bad)}
+.btn-danger:hover{background:var(--bad-wash)}
+.btn-sm{padding:.45em .8em;font-size:13.5px;border-radius:8px}
+.btn[disabled]{opacity:.45;cursor:not-allowed;box-shadow:none}
+
+.field{display:flex;flex-direction:column;gap:6px}
+.field label,.label{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--soft)}
+.input,select.input,textarea.input{width:100%;border:1px solid var(--rule);background:var(--white);border-radius:var(--r);padding:.7em .85em;font-size:16px;transition:border-color .15s,box-shadow .15s}
+.input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-wash)}
+.input[aria-invalid="true"]{border-color:var(--bad);box-shadow:0 0 0 3px var(--bad-wash)}
+textarea.input{min-height:88px;resize:vertical}
+.hint{font-size:13px;color:var(--mute)}
+.err{font-size:13px;color:var(--bad);font-weight:600}
+.check{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--soft)}
+.check input{margin-top:3px;width:18px;height:18px;accent-color:var(--navy);flex:none}
+
+/* Status pills */
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:700;white-space:nowrap}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.st-potrjena{background:var(--info-wash);color:var(--info)}
+.st-cakajoca{background:var(--warn-wash);color:var(--warn)}
+.st-prispeli{background:var(--ok-wash);color:var(--ok)}
+.st-zakljucena{background:#F1F1F1;color:#555}
+.st-preklicana{background:var(--bad-wash);color:var(--bad)}
+.st-noshow{background:var(--bad-wash);color:var(--bad)}
+
+/* Toast */
+.toast-wrap{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:200;width:min(92vw,420px)}
+.toast{background:var(--navy);color:var(--white);padding:12px 16px;border-radius:var(--r);box-shadow:var(--shadow-lg);font-size:14.5px;font-weight:600;border-left:4px solid var(--gold)}
+.toast.bad{border-left-color:#E07A7A}
+
+/* Modal */
+.modal-back{position:fixed;inset:0;background:rgba(10,14,28,.45);display:flex;align-items:flex-start;justify-content:center;padding:6vh 16px;z-index:150;overflow:auto}
+.modal{background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);width:min(640px,100%);position:relative}
+.modal-head{padding:22px 24px 14px;border-bottom:1px solid var(--rule-2);display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.modal-head h2{font-family:var(--display);font-size:30px;font-weight:600;line-height:1.1;color:var(--black)}
+.modal-body{padding:20px 24px;display:grid;gap:16px}
+.modal-foot{padding:16px 24px 22px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;border-top:1px solid var(--rule-2)}
+.x{border:0;background:transparent;font-size:26px;line-height:1;color:var(--mute);padding:4px 8px;border-radius:6px}
+.x:hover{color:var(--black);background:var(--rule-2)}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:560px){.grid-2{grid-template-columns:1fr}}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+
+@media print{
+  .bar,.warn,.dnav,#new-res,.list-head .btn,.list-head .input,.row-actions,.board,.toast-wrap{display:none!important}
+  .list,.kpis{box-shadow:none}
+  body{font-size:12px}
+}
