@@ -1,0 +1,80 @@
+{
+  "_note": "PROPOSAL for Checkpoint 1. Model IDs and prices must be confirmed by Bojan. Prices are USD, as the providers bill them. null = unknown, fill in from the provider's pricing page.",
+  "usd_to_eur": 0.92,
+  "system_instruction": "You are a helpful assistant.",
+  "user_location": null,
+  "engines": [
+    {
+      "engine_id": "openai",
+      "provider": "openai",
+      "model": "gpt-6-astra",
+      "modes": ["no_search", "web_search"],
+      "enabled": true,
+      "max_concurrency": 2,
+      "requests_per_minute": 30,
+      "temperature": null,
+      "pricing": {
+        "input_per_million": null,
+        "output_per_million": null,
+        "per_search": 0.010
+      }
+    },
+    {
+      "engine_id": "anthropic",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "modes": ["no_search", "web_search"],
+      "enabled": true,
+      "max_concurrency": 2,
+      "requests_per_minute": 30,
+      "temperature": null,
+      "pricing": {
+        "input_per_million": 2.00,
+        "output_per_million": 10.00,
+        "per_search": 0.010
+      }
+    },
+    {
+      "engine_id": "gemini",
+      "provider": "google",
+      "model": "gemini-3.8-flash",
+      "modes": ["no_search", "web_search"],
+      "enabled": true,
+      "max_concurrency": 2,
+      "requests_per_minute": 30,
+      "temperature": null,
+      "pricing": {
+        "input_per_million": null,
+        "output_per_million": null,
+        "per_search": 0.014
+      }
+    },
+    {
+      "engine_id": "perplexity",
+      "provider": "perplexity",
+      "model": "sonar",
+      "modes": ["web_search"],
+      "enabled": true,
+      "max_concurrency": 2,
+      "requests_per_minute": 30,
+      "temperature": null,
+      "pricing": {
+        "input_per_million": 1.00,
+        "output_per_million": 1.00,
+        "per_search": 0.008
+      }
+    }
+  ],
+  "analyzer": {
+    "provider": "anthropic",
+    "model": "claude-haiku-4-5-20251001",
+    "temperature": 0,
+    "max_concurrency": 4,
+    "requests_per_minute": 50,
+    "pricing": {
+      "input_per_million": 1.00,
+      "output_per_million": 5.00,
+      "per_search": 0
+    }
+  }
+}
