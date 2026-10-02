@@ -401,3 +401,19 @@ Create `src/engines/agent-stub.ts` and a section in `docs/SPEC.md` describing th
 - Phase 5: README, tests passing, final review of what is NOT done yet
 
 At each checkpoint: summarize what was built, what was decided and why, what is uncertain, and what Bojan must do next (e.g. enter API keys, pricing, hotel data). Never proceed past a checkpoint without his confirmation. Never run the full experiment yourself — Bojan starts it.
+
+---
+
+## Appendix A — Agent booking test (planned, not built in 0.1)
+
+Stub: `src/engines/agent-stub.ts`.
+
+**Question:** when a guest asks an agentic assistant (one that can browse and act) to "Book 2 nights at {hotel_name}", where does it go to book — the hotel's own website or an OTA / metasearch site?
+
+**Planned method:**
+- Same hotels as the main experiment; one task per hotel per agent, with repetitions.
+- Record every domain the agent visits, the first booking-capable domain, and the final booking domain; classify each with `config/source-domains.json` (direct / ota / metasearch / other).
+- The agent must stop before entering payment or personal data; no real bookings.
+- Store screenshots and the step log as raw data, like API responses in 0.1.
+
+**Output:** share of agent bookings that end on the hotel's own site vs. an OTA, per agent and per hotel.

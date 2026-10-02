@@ -72,12 +72,19 @@ export interface BudgetCheck {
 }
 
 /** May a run start? Needs a budget, complete prices, and an estimate within budget. */
-export function checkBudgetBeforeRun(estimate: CostEstimate, budgetEur: number | null): BudgetCheck {
+export function checkBudgetBeforeRun(
+  estimate: CostEstimate,
+  budgetEur: number | null,
+  alreadySpentEur = 0,
+): BudgetCheck {
   const reasons: string[] = [];
   if (budgetEur === null) reasons.push("BUDGET_EUR is not set in .env");
   if (estimate.incomplete) reasons.push("some prices in engines.json are missing (null), so the cost cannot be estimated");
-  if (budgetEur !== null && estimate.knownEur > budgetEur)
-    reasons.push(`estimated cost €${estimate.knownEur.toFixed(2)} exceeds BUDGET_EUR €${budgetEur.toFixed(2)}`);
+  const total = estimate.knownEur + alreadySpentEur;
+  if (budgetEur !== null && total > budgetEur) {
+    const spent = alreadySpentEur > 0 ? ` (incl. €${alreadySpentEur.toFixed(2)} already spent)` : "";
+    reasons.push(`estimated cost €${total.toFixed(2)}${spent} exceeds BUDGET_EUR €${budgetEur.toFixed(2)}`);
+  }
   return { ok: reasons.length === 0, reasons };
 }
 

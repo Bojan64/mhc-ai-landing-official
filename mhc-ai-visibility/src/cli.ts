@@ -5,7 +5,12 @@ import { loadDotEnv, readEnv } from "./config/env";
 import { loadConfig, type AppConfig } from "./config/load";
 import { openDb } from "./db/db";
 import { savePlannedRun } from "./db/repository";
+import { API_KEY_VARS } from "./engines";
+import { listModels } from "./engines/models";
 import { applicablePrompts } from "./runner/applicability";
+import { executeRun, RunRefused } from "./runner/execute";
+import { showResponses } from "./runner/show";
+import { redact } from "./util/redact";
 import { checkBudgetBeforeRun, estimateCost } from "./runner/cost";
 import { buildJobs, countBy } from "./runner/plan";
 import { eur, table, usd } from "./util/table";
@@ -14,20 +19,12 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CONFIG_DIR = join(ROOT, "config");
 const DB_PATH = join(ROOT, "data", "mhc.db");
 
-const API_KEY_VARS: Record<string, string> = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  google: "GEMINI_API_KEY",
-  perplexity: "PERPLEXITY_API_KEY",
-};
-
 const LATER: Record<string, string> = {
-  run: "Phase 2", resume: "Phase 2", "list-models": "Phase 2",
   analyze: "Phase 3",
   metrics: "Phase 4", report: "Phase 4", "validation-export": "Phase 4", "validation-compare": "Phase 4",
 };
 
-function main(): number {
+async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2);
   const { values } = parseArgs({
     args: rest,
@@ -38,6 +35,8 @@ function main(): number {
       engine: { type: "string" },
       hotel: { type: "string" },
       size: { type: "string" },
+      "retry-failed": { type: "boolean" },
+      "max-chars": { type: "string" },
     },
     strict: true,
   });
@@ -48,6 +47,23 @@ function main(): number {
       return validateConfig();
     case "plan":
       return plan(requireRunName(values["run-name"]), values.notes);
+    case "run":
+    case "resume":
+      return runOrResume(command, requireRunName(values["run-name"]), {
+        limitPerEngine: positiveInt(values.limit, "--limit"),
+        engine: values.engine,
+        hotel: values.hotel,
+        retryFailed: values["retry-failed"],
+      });
+    case "list-models":
+      return checkModels();
+    case "show":
+      return show(requireRunName(values["run-name"]), {
+        engine: values.engine,
+        hotel: values.hotel,
+        limit: positiveInt(values.limit, "--limit"),
+        maxChars: positiveInt(values["max-chars"], "--max-chars"),
+      });
     case undefined:
     case "help":
     case "--help":
@@ -69,6 +85,13 @@ function requireRunName(name: string | undefined): string {
     throw new Error('Please give a run name with letters, digits, "-", "_" or ".", e.g. --run-name "pilot-01"');
   }
   return name;
+}
+
+function positiveInt(v: string | undefined, name: string): number | undefined {
+  if (v === undefined) return undefined;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`${name} must be a whole number ≥ 1`);
+  return n;
 }
 
 /** Load config and print errors/warnings. Returns null if the config is invalid. */
@@ -170,21 +193,113 @@ function plan(runName: string, notes?: string): number {
   return 0;
 }
 
+async function runOrResume(
+  kind: "run" | "resume",
+  runName: string,
+  filters: { limitPerEngine?: number; engine?: string; hotel?: string; retryFailed?: boolean },
+): Promise<number> {
+  const config = loadAndReport();
+  if (!config) return 1;
+  const env = readEnv();
+  const db = openDb(DB_PATH);
+  // First Ctrl+C: finish the calls in progress, then stop cleanly. Second Ctrl+C: quit at once.
+  let interrupted = false;
+  const onSigint = () => {
+    if (interrupted) process.exit(130);
+    interrupted = true;
+    console.log("\nStopping after the calls in progress… (press Ctrl+C again to quit immediately)");
+  };
+  process.on("SIGINT", onSigint);
+  try {
+    const s = await executeRun(db, config, runName, {
+      kind, ...filters, budgetEur: env.budgetEur, shouldStop: () => interrupted,
+    });
+    const rate = config.engines.usd_to_eur;
+    console.log(
+      `\nDone: ${s.done} ok, ${s.failed} failed, ${s.notStarted} not started. ` +
+        `Cost this session: ${usd(s.spentThisSessionUsd)} ≈ ${eur(s.spentThisSessionUsd * rate)}. Run status: ${s.runStatus}.`,
+    );
+    if (s.failed) console.log(`Failed jobs can be retried with: resume --run-name "${runName}" --retry-failed`);
+    return s.failed ? 2 : 0;
+  } catch (e) {
+    if (e instanceof RunRefused) {
+      console.log(e.message);
+      return 1;
+    }
+    throw e;
+  } finally {
+    process.off("SIGINT", onSigint);
+    db.close();
+  }
+}
+
+async function checkModels(): Promise<number> {
+  const config = loadAndReport();
+  if (!config) return 1;
+  const wanted = [
+    ...config.engines.engines.map((e) => ({ label: e.engine_id, provider: e.provider, model: e.model })),
+    { label: "analyzer", provider: config.engines.analyzer.provider, model: config.engines.analyzer.model },
+  ];
+  let problems = 0;
+  for (const w of wanted) {
+    const keyVar = API_KEY_VARS[w.provider];
+    const key = process.env[keyVar];
+    if (!key) {
+      console.log(`? ${w.label}: ${keyVar} not set — cannot check "${w.model}"`);
+      problems++;
+      continue;
+    }
+    try {
+      const ids = await listModels(w.provider, key);
+      if (ids === null) console.log(`? ${w.label}: provider has no model list; "${w.model}" is checked on the first real call`);
+      else if (ids.includes(w.model)) console.log(`✓ ${w.label}: "${w.model}" is available`);
+      else {
+        problems++;
+        const similar = ids.filter((id) => id.split(/[-.]/)[0] === w.model.split(/[-.]/)[0]).slice(-15);
+        console.log(`✗ ${w.label}: "${w.model}" NOT found. Similar models on this account: ${similar.join(", ") || "(none)"}`);
+      }
+    } catch (e) {
+      problems++;
+      console.log(`✗ ${w.label}: could not list models (${redact((e as Error).message).split("\n")[0]})`);
+    }
+  }
+  return problems ? 1 : 0;
+}
+
+function show(runName: string, f: { engine?: string; hotel?: string; limit?: number; maxChars?: number }): number {
+  const config = loadConfig(CONFIG_DIR).config;
+  if (!config) return loadAndReport(), 1;
+  const db = openDb(DB_PATH);
+  try {
+    showResponses(db, config, runName, f);
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
 function printHelp(): void {
   console.log(`MHC AI Visibility Engine 0.1
 
 Usage: npm run cli -- <command> [options]
 
   validate-config                       check all files in config/
+  list-models                           check with each provider that the configured models exist
   plan --run-name NAME [--notes TEXT]   build the job list and estimate cost (no API calls)
+  run --run-name NAME [--limit N] [--engine ID] [--hotel ID]
+                                        start a planned run (--limit = max jobs per engine)
+  resume --run-name NAME [--retry-failed] [--limit N] [--engine ID] [--hotel ID]
+                                        continue a started or stopped run
+  show --run-name NAME [--limit N] [--engine ID] [--hotel ID] [--max-chars N]
+                                        print stored answers with their sources
 
-Coming in later phases: run, resume, list-models, analyze, metrics, report,
-validation-export, validation-compare.`);
+Coming in later phases: analyze, metrics, report, validation-export, validation-compare.`);
 }
 
-try {
-  process.exitCode = main();
-} catch (e) {
-  console.error(`Error: ${(e as Error).message}`);
-  process.exitCode = 1;
-}
+main().then(
+  (code) => (process.exitCode = code),
+  (e) => {
+    console.error(`Error: ${redact((e as Error).message)}`);
+    process.exitCode = 1;
+  },
+);
