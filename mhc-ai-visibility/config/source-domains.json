@@ -1,0 +1,7 @@
+{
+  "_note": "A pattern ending in '.' matches any ending (expedia. = expedia.com, expedia.de ...). A pattern with '/' also checks the path. Add local tourism domains under tourism_board.",
+  "ota": ["booking.com", "expedia.", "hotels.com", "agoda.com", "trip.com", "airbnb."],
+  "metasearch": ["trivago.", "kayak.", "google.com/travel", "skyscanner."],
+  "review": ["tripadvisor.", "holidaycheck.", "zoover."],
+  "tourism_board": ["slovenia.info"]
+}

@@ -1,0 +1,13 @@
+{
+  "version": "0.1-provisional",
+  "weights": {
+    "presence": 25,
+    "position": 20,
+    "factual_accuracy": 20,
+    "source_authority": 15,
+    "competitive_position": 10,
+    "direct_booking": 10
+  },
+  "engine_weights": { "openai": 1, "anthropic": 1, "gemini": 1, "perplexity": 1 },
+  "max_position_counted": 5
+}

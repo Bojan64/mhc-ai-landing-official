@@ -1,0 +1,190 @@
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { loadDotEnv, readEnv } from "./config/env";
+import { loadConfig, type AppConfig } from "./config/load";
+import { openDb } from "./db/db";
+import { savePlannedRun } from "./db/repository";
+import { applicablePrompts } from "./runner/applicability";
+import { checkBudgetBeforeRun, estimateCost } from "./runner/cost";
+import { buildJobs, countBy } from "./runner/plan";
+import { eur, table, usd } from "./util/table";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const CONFIG_DIR = join(ROOT, "config");
+const DB_PATH = join(ROOT, "data", "mhc.db");
+
+const API_KEY_VARS: Record<string, string> = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GEMINI_API_KEY",
+  perplexity: "PERPLEXITY_API_KEY",
+};
+
+const LATER: Record<string, string> = {
+  run: "Phase 2", resume: "Phase 2", "list-models": "Phase 2",
+  analyze: "Phase 3",
+  metrics: "Phase 4", report: "Phase 4", "validation-export": "Phase 4", "validation-compare": "Phase 4",
+};
+
+function main(): number {
+  const [command, ...rest] = process.argv.slice(2);
+  const { values } = parseArgs({
+    args: rest,
+    options: {
+      "run-name": { type: "string" },
+      notes: { type: "string" },
+      limit: { type: "string" },
+      engine: { type: "string" },
+      hotel: { type: "string" },
+      size: { type: "string" },
+    },
+    strict: true,
+  });
+  loadDotEnv(join(ROOT, ".env"));
+
+  switch (command) {
+    case "validate-config":
+      return validateConfig();
+    case "plan":
+      return plan(requireRunName(values["run-name"]), values.notes);
+    case undefined:
+    case "help":
+    case "--help":
+      printHelp();
+      return 0;
+    default:
+      if (command in LATER) {
+        console.log(`"${command}" is not built yet (planned for ${LATER[command]}).`);
+        return 1;
+      }
+      console.error(`Unknown command "${command}".`);
+      printHelp();
+      return 1;
+  }
+}
+
+function requireRunName(name: string | undefined): string {
+  if (!name || !/^[A-Za-z0-9_.-]+$/.test(name)) {
+    throw new Error('Please give a run name with letters, digits, "-", "_" or ".", e.g. --run-name "pilot-01"');
+  }
+  return name;
+}
+
+/** Load config and print errors/warnings. Returns null if the config is invalid. */
+function loadAndReport(): AppConfig | null {
+  const { config, errors, warnings } = loadConfig(CONFIG_DIR);
+  for (const w of warnings) console.log(`  ⚠ ${w}`);
+  for (const e of errors) console.log(`  ✗ ${e}`);
+  if (!config) console.log(`\nConfig is NOT valid (${errors.length} error(s)). Please fix the lines marked ✗.`);
+  return config;
+}
+
+function validateConfig(): number {
+  console.log(`Checking config in ${CONFIG_DIR}\n`);
+  const config = loadAndReport();
+  if (!config) return 1;
+
+  const enabled = config.engines.engines.filter((e) => e.enabled);
+  const hotelRows: (string | number)[][] = [["hotel", "city", "stars", "discovery prompts", "brand prompts", "ground truth"]];
+  let problems = 0;
+  for (const h of config.hotels) {
+    const ps = applicablePrompts(config.prompts, h);
+    const disc = ps.filter((p) => p.type === "discovery").length;
+    if (disc === 0) problems++;
+    hotelRows.push([
+      `${h.hotel_id} ${h.name}`, h.city, h.stars, disc, ps.length - disc,
+      h.ground_truth_confirmed_by_hotel ? "confirmed" : "NOT confirmed",
+    ]);
+  }
+  const engineRows: string[][] = [["engine", "model", "modes", "API key"]];
+  for (const e of enabled) {
+    const keyVar = API_KEY_VARS[e.provider];
+    engineRows.push([e.engine_id, e.model, e.modes.join(" + "), process.env[keyVar] ? "set" : `missing (${keyVar})`]);
+  }
+
+  console.log(`\nHotels (${config.hotels.length}):\n${table(hotelRows)}`);
+  console.log(`\nPrompt templates: ${config.prompts.length}`);
+  console.log(`\nEnabled engines (${enabled.length}):\n${table(engineRows)}`);
+  console.log(`\nAnalyzer: ${config.engines.analyzer.model}`);
+  if (problems) console.log(`\n  ⚠ ${problems} hotel(s) have no discovery prompts and cannot get a presence score.`);
+  console.log("\nConfig is valid.");
+  return 0;
+}
+
+function plan(runName: string, notes?: string): number {
+  const config = loadAndReport();
+  if (!config) return 1;
+  const env = readEnv();
+  const jobs = buildJobs(config, env.repetitions);
+  const estimate = estimateCost(config, jobs);
+  const engineById = new Map(config.engines.engines.map((e) => [e.engine_id, e]));
+
+  console.log(`\nPlan for run "${runName}" — ${env.repetitions} repetition(s) per question. No API is called.\n`);
+
+  const byEngine: (string | number)[][] = [["engine", "model", "calls", "est. cost USD", "est. cost EUR"]];
+  for (const e of estimate.perEngine) {
+    byEngine.push([
+      e.engine_id, engineById.get(e.engine_id)!.model, e.calls,
+      usd(e.usd), eur(e.usd === null ? null : e.usd * config.engines.usd_to_eur),
+    ]);
+  }
+  const a = estimate.analyzer;
+  byEngine.push([
+    "analyzer", config.engines.analyzer.model, a.calls,
+    usd(a.usd), eur(a.usd === null ? null : a.usd * config.engines.usd_to_eur),
+  ]);
+  console.log(`Calls and cost per engine:\n${table(byEngine)}\n`);
+
+  const byMode: (string | number)[][] = [["engine × mode", "calls"]];
+  for (const [k, n] of countBy(jobs, (j) => `${j.engine_id} / ${j.mode}`)) byMode.push([k, n]);
+  for (const [k, n] of countBy(jobs, (j) => `ALL / ${j.mode}`)) byMode.push([k, n]);
+  console.log(`Calls per mode:\n${table(byMode)}\n`);
+
+  const byHotel: (string | number)[][] = [["hotel", "prompts", "calls"]];
+  const hotelCalls = countBy(jobs, (j) => j.hotel_id);
+  for (const h of config.hotels) {
+    byHotel.push([`${h.hotel_id} ${h.name}`, applicablePrompts(config.prompts, h).length, hotelCalls.get(h.hotel_id) ?? 0]);
+  }
+  console.log(`Calls per hotel:\n${table(byHotel)}\n`);
+
+  console.log(`Total tested-engine calls: ${jobs.length}`);
+  console.log(`Total analyzer calls:      ${a.calls}`);
+  console.log(
+    `Estimated total cost:      ${usd(estimate.knownUsd)} ≈ ${eur(estimate.knownEur)}` +
+      (estimate.incomplete ? "  (INCOMPLETE — some prices are missing, real cost will be higher)" : ""),
+  );
+  console.log("(Estimate uses the rough token/search assumptions in engines.json → cost_assumptions.)");
+
+  const check = checkBudgetBeforeRun(estimate, env.budgetEur);
+  console.log(`Budget (BUDGET_EUR):       ${eur(env.budgetEur)}`);
+  for (const r of check.reasons) console.log(`  ⚠ ${r} — "run" would refuse to start.`);
+
+  const db = openDb(DB_PATH);
+  try {
+    const { replanned } = savePlannedRun(db, runName, config, env.repetitions, jobs, notes);
+    console.log(`\n${replanned ? "Updated" : "Saved"} run "${runName}" with ${jobs.length} pending jobs in ${DB_PATH}.`);
+  } finally {
+    db.close();
+  }
+  return 0;
+}
+
+function printHelp(): void {
+  console.log(`MHC AI Visibility Engine 0.1
+
+Usage: npm run cli -- <command> [options]
+
+  validate-config                       check all files in config/
+  plan --run-name NAME [--notes TEXT]   build the job list and estimate cost (no API calls)
+
+Coming in later phases: run, resume, list-models, analyze, metrics, report,
+validation-export, validation-compare.`);
+}
+
+try {
+  process.exitCode = main();
+} catch (e) {
+  console.error(`Error: ${(e as Error).message}`);
+  process.exitCode = 1;
+}

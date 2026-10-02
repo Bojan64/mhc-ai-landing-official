@@ -1,8 +1,14 @@
 {
-  "_note": "PROPOSAL for Checkpoint 1. Model IDs and prices must be confirmed by Bojan. Prices are USD, as the providers bill them. null = unknown, fill in from the provider's pricing page.",
+  "_note": "Prices are in USD per million tokens, and per single search/request, as the providers bill them. null = not filled in yet (run will refuse to start). Temperature null = provider default (intentional: we measure what real users get).",
   "usd_to_eur": 0.92,
   "system_instruction": "You are a helpful assistant.",
-  "user_location": null,
+  "user_location": "neutral",
+  "cost_assumptions": {
+    "_note": "Average tokens/searches per call, used ONLY for the cost estimate in 'plan'. Rough guesses until the smoke test gives real numbers.",
+    "no_search": { "input_tokens": 60, "output_tokens": 900, "searches_per_call": 0 },
+    "web_search": { "input_tokens": 12000, "output_tokens": 1000, "searches_per_call": 2 },
+    "analyzer": { "input_tokens": 3000, "output_tokens": 700 }
+  },
   "engines": [
     {
       "engine_id": "openai",
@@ -13,11 +19,7 @@
       "max_concurrency": 2,
       "requests_per_minute": 30,
       "temperature": null,
-      "pricing": {
-        "input_per_million": null,
-        "output_per_million": null,
-        "per_search": 0.010
-      }
+      "pricing": { "input_per_million": null, "output_per_million": null, "per_search": 0.01 }
     },
     {
       "engine_id": "anthropic",
@@ -28,11 +30,7 @@
       "max_concurrency": 2,
       "requests_per_minute": 30,
       "temperature": null,
-      "pricing": {
-        "input_per_million": 2.00,
-        "output_per_million": 10.00,
-        "per_search": 0.010
-      }
+      "pricing": { "input_per_million": 2.0, "output_per_million": 10.0, "per_search": 0.01 }
     },
     {
       "engine_id": "gemini",
@@ -43,11 +41,7 @@
       "max_concurrency": 2,
       "requests_per_minute": 30,
       "temperature": null,
-      "pricing": {
-        "input_per_million": null,
-        "output_per_million": null,
-        "per_search": 0.014
-      }
+      "pricing": { "input_per_million": null, "output_per_million": null, "per_search": 0.014 }
     },
     {
       "engine_id": "perplexity",
@@ -58,10 +52,9 @@
       "max_concurrency": 2,
       "requests_per_minute": 30,
       "temperature": null,
-      "pricing": {
-        "input_per_million": 1.00,
-        "output_per_million": 1.00,
-        "per_search": 0.008
+      "pricing": { "input_per_million": 1.0, "output_per_million": 1.0, "per_search": 0.012 },
+      "cost_assumptions": {
+        "web_search": { "input_tokens": 60, "output_tokens": 900, "searches_per_call": 1 }
       }
     }
   ],
@@ -71,10 +64,6 @@
     "temperature": 0,
     "max_concurrency": 4,
     "requests_per_minute": 50,
-    "pricing": {
-      "input_per_million": 1.00,
-      "output_per_million": 5.00,
-      "per_search": 0
-    }
+    "pricing": { "input_per_million": 1.0, "output_per_million": 5.0, "per_search": 0 }
   }
 }

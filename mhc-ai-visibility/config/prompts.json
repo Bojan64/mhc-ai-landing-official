@@ -1,0 +1,22 @@
+[
+  {"id": "LOC-01", "language": "en", "category": "location", "type": "discovery", "applies_if": [], "text": "Best hotels in {city}"},
+  {"id": "LOC-02", "language": "en", "category": "location", "type": "discovery", "applies_if": [], "text": "Where to stay in {city}?"},
+  {"id": "LOC-03", "language": "en", "category": "location", "type": "discovery", "applies_if": [], "text": "Best {stars}-star hotel in {city}"},
+  {"id": "VAL-01", "language": "en", "category": "value", "type": "discovery", "applies_if": [], "text": "Best value hotel in {city}"},
+  {"id": "LUX-01", "language": "en", "category": "luxury", "type": "discovery", "applies_if": ["luxury"], "min_stars": 4, "text": "Luxury hotel in {city}"},
+  {"id": "WELL-01", "language": "en", "category": "wellness", "type": "discovery", "applies_if": ["spa"], "text": "Best wellness hotel in {city}"},
+  {"id": "WELL-02", "language": "en", "category": "wellness", "type": "discovery", "applies_if": ["spa"], "text": "Best spa hotel in {region}"},
+  {"id": "WELL-03", "language": "en", "category": "wellness", "type": "discovery", "applies_if": ["spa"], "text": "Hotel for a wellness weekend in Slovenia"},
+  {"id": "FAM-01", "language": "en", "category": "family", "type": "discovery", "applies_if": ["family"], "text": "Best family hotel in {city}"},
+  {"id": "FAM-02", "language": "en", "category": "family", "type": "discovery", "applies_if": ["family"], "text": "Hotels in {city} for families with small children"},
+  {"id": "ROM-01", "language": "en", "category": "romantic", "type": "discovery", "applies_if": ["couples", "adults_only"], "text": "Best romantic hotel in {city} for couples"},
+  {"id": "ROM-02", "language": "en", "category": "romantic", "type": "discovery", "applies_if": ["adults_only"], "text": "Adults-only hotel in {region}"},
+  {"id": "BUS-01", "language": "en", "category": "business", "type": "discovery", "applies_if": ["business"], "text": "Best business hotel in {city}"},
+  {"id": "EVT-01", "language": "en", "category": "events", "type": "discovery", "applies_if": ["events"], "text": "Hotel with conference rooms in {city}"},
+  {"id": "DE-01", "language": "de", "category": "location", "type": "discovery", "applies_if": [], "text": "Bestes Hotel in {city}"},
+  {"id": "DE-02", "language": "de", "category": "wellness", "type": "discovery", "applies_if": ["spa"], "text": "Wellnesshotel in {region} empfehlen"},
+  {"id": "IT-01", "language": "it", "category": "location", "type": "discovery", "applies_if": [], "text": "Miglior hotel a {city}"},
+  {"id": "SL-01", "language": "sl", "category": "location", "type": "discovery", "applies_if": [], "text": "Najboljši hotel v kraju {city}"},
+  {"id": "BRAND-01", "language": "en", "category": "brand_facts", "type": "brand", "applies_if": [], "text": "Tell me about {hotel_name} in {city}. What facilities does it have?"},
+  {"id": "BRAND-02", "language": "en", "category": "brand_booking", "type": "brand", "applies_if": [], "text": "Where should I book {hotel_name} in {city}?"}
+]

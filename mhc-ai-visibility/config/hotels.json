@@ -1,0 +1,55 @@
+[
+  {
+    "_note": "FICTIONAL example hotel for testing. Replace with real hotels and hotel-confirmed facts.",
+    "hotel_id": "HT1",
+    "name": "Hotel Morska Zvezda",
+    "aliases": ["Morska Zvezda Portorož", "Hotel Morska Zvezda Portoroz"],
+    "website_domain": "morska-zvezda.example",
+    "city": "Portorož",
+    "region": "Slovenian coast",
+    "stars": 4,
+    "tags": ["spa", "couples", "business", "events"],
+    "competitor_ids": ["HT2"],
+    "extra_competitors": [{ "name": "Hotel Primer Obala", "aliases": [] }],
+    "ground_truth": {
+      "pool_indoor": true,
+      "pool_outdoor": false,
+      "spa_wellness": true,
+      "beach_access": false,
+      "parking": true,
+      "pets_allowed": false,
+      "restaurant": true,
+      "family_friendly": false,
+      "adults_only": false,
+      "star_rating": 4,
+      "distance_to_sea": 0.3,
+      "price_level": "upper-mid",
+      "business_facilities": true,
+      "event_facilities": true
+    },
+    "ground_truth_confirmed_by_hotel": false
+  },
+  {
+    "_note": "FICTIONAL example hotel for testing. Missing ground-truth keys are allowed.",
+    "hotel_id": "HT2",
+    "name": "Hotel Planinski Raj",
+    "aliases": ["Planinski Raj Bled"],
+    "website_domain": "planinski-raj.example",
+    "city": "Bled",
+    "region": "Julian Alps",
+    "stars": 3,
+    "tags": ["family", "pets"],
+    "competitor_ids": ["HT1"],
+    "extra_competitors": [],
+    "ground_truth": {
+      "pool_indoor": false,
+      "parking": true,
+      "pets_allowed": true,
+      "restaurant": true,
+      "family_friendly": true,
+      "star_rating": 3,
+      "price_level": "mid-range"
+    },
+    "ground_truth_confirmed_by_hotel": false
+  }
+]
