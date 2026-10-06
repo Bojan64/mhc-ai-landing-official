@@ -11,6 +11,12 @@ export interface SourceRef {
   title: string | null;
   /** Domain to classify. Usually the URL's host; for Gemini redirect links it is the page title. */
   domain: string | null;
+  /**
+   * "cited" = the provider ties this source to a passage of the answer (OpenAI url_citation,
+   * Claude text citations). "retrieved" = the provider's search returned it for this answer
+   * (Claude search results, Gemini grounding chunks, Perplexity search_results).
+   */
+  kind: "cited" | "retrieved";
 }
 
 export interface EngineResult {

@@ -47,4 +47,5 @@ export const normalizeOpenAICitations: CitationNormalizer = (citations) =>
     url: c.url,
     title: c.title ?? null,
     domain: hostOf(c.url),
+    kind: "cited" as const,
   }));

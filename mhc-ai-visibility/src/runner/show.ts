@@ -31,7 +31,7 @@ export function showResponses(
     log(answer || "(empty answer)");
     log("─".repeat(80));
     log(`Sources (${sources.length}):`);
-    for (const s of sources) log(`  - [${s.domain ?? "?"}] ${s.title ?? ""} ${s.url}`);
+    for (const s of sources) log(`  - ${s.kind === "cited" ? "cited    " : "retrieved"} [${s.domain ?? "?"}] ${s.title ?? ""} ${s.url}`);
   }
   if (shown === 0) log(`No stored answers found for run "${runId}".`);
   return shown;

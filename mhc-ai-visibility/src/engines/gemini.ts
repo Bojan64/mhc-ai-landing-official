@@ -53,6 +53,6 @@ export const normalizeGeminiCitations: CitationNormalizer = (citations) => {
       const host = hostOf(url);
       const isRedirect = host !== null && host.endsWith("vertexaisearch.cloud.google.com");
       const titleDomain = title && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(title) ? title.toLowerCase().replace(/^www\./, "") : null;
-      return { url, title, domain: isRedirect ? (c.web!.domain ?? titleDomain) : host };
+      return { url, title, domain: isRedirect ? (c.web!.domain ?? titleDomain) : host, kind: "retrieved" as const };
     });
 };

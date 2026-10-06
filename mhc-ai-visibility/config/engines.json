@@ -4,9 +4,9 @@
   "system_instruction": "You are a helpful assistant.",
   "user_location": "neutral",
   "cost_assumptions": {
-    "_note": "Average tokens/searches per call, used ONLY for the cost estimate in 'plan'. Rough guesses until the smoke test gives real numbers.",
-    "no_search": { "input_tokens": 60, "output_tokens": 900, "searches_per_call": 0 },
-    "web_search": { "input_tokens": 12000, "output_tokens": 1000, "searches_per_call": 2 },
+    "_note": "Average tokens/searches per call, used ONLY for the cost estimate in 'plan'. web_search updated from the Claude smoke test (2026-10-06: ~31,000 input tokens, 1 search, ~1,200 output tokens per call); other engines still guesses.",
+    "no_search": { "input_tokens": 60, "output_tokens": 1300, "searches_per_call": 0 },
+    "web_search": { "input_tokens": 32000, "output_tokens": 1300, "searches_per_call": 1.5 },
     "analyzer": { "input_tokens": 3000, "output_tokens": 700 }
   },
   "engines": [

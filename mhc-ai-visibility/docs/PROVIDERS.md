@@ -78,3 +78,17 @@ check that they open.
 tested calls**, plus the same number of analyzer calls. With searches priced at about $0.01 each and short
 answers, I estimate a full run at roughly **$60–150**, but this is only approximate: it depends on the missing token
 prices and on how many searches each model makes per answer.
+
+## Findings from the Claude smoke test (2026-10-06)
+
+- `claude-sonnet-5-5` and `claude-haiku-4-5-20251001` confirmed available via `list-models`.
+- With `web_search_20260209`, Claude reads search results in a server-side code-execution step,
+  and the final answer text carried **no citations**. The sources are in `web_search_tool_result`
+  blocks (URL + title of every page the search returned). We store both and label each source:
+  - **cited**: the provider links the source to a passage of the answer (OpenAI; Claude when it adds text citations)
+  - **retrieved**: the search returned it for this answer (Claude search results, Gemini, Perplexity)
+  The report must keep these apart: "retrieved" means the AI saw the page, not that it quoted it.
+- A Claude web-search call used ~31,000 input tokens (search results count as input) → about
+  $0.085 per call, vs ~$0.012 without search. Cost assumptions in `engines.json` updated.
+- Claude answered a question about a hotel it did not know (fictional HT2) by saying it had no
+  reliable information, instead of inventing facts.

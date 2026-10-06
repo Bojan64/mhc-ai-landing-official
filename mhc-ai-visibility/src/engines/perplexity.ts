@@ -48,4 +48,5 @@ export const normalizePerplexityCitations: CitationNormalizer = (citations) =>
     url: c.url,
     title: c.title ?? null,
     domain: hostOf(c.url),
+    kind: "retrieved" as const,
   }));

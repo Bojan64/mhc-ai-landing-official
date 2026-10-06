@@ -10,15 +10,29 @@ describe("citation normalizers", () => {
     const out = normalizeOpenAICitations([
       { type: "url_citation", url: "https://www.booking.com/hotel/si/x.html", title: "Hotel X", start_index: 0, end_index: 5 },
     ]);
-    expect(out).toEqual([{ url: "https://www.booking.com/hotel/si/x.html", title: "Hotel X", domain: "booking.com" }]);
+    expect(out).toEqual([{ url: "https://www.booking.com/hotel/si/x.html", title: "Hotel X", domain: "booking.com", kind: "cited" }]);
   });
 
-  it("Anthropic web_search_result_location citations", () => {
-    const out = normalizeAnthropicCitations([
-      { type: "web_search_result_location", url: "https://hotel-x.si/en", title: "Hotel X", cited_text: "…", encrypted_index: "e" },
-      { type: "char_location", cited_text: "x" },
+  it("Anthropic: text citations are 'cited', search results are 'retrieved', no duplicates", () => {
+    const out = normalizeAnthropicCitations({
+      text_citations: [
+        { type: "web_search_result_location", url: "https://hotel-x.si/en", title: "Hotel X", cited_text: "…", encrypted_index: "e" },
+        { type: "char_location", cited_text: "x" },
+      ],
+      search_results: [
+        { type: "web_search_result", url: "https://hotel-x.si/en", title: "Hotel X", encrypted_content: "…" },
+        { type: "web_search_result", url: "https://www.tripadvisor.com/Hotels-g274863", title: "TA", encrypted_content: "…" },
+      ],
+    });
+    expect(out).toEqual([
+      { url: "https://hotel-x.si/en", title: "Hotel X", domain: "hotel-x.si", kind: "cited" },
+      { url: "https://www.tripadvisor.com/Hotels-g274863", title: "TA", domain: "tripadvisor.com", kind: "retrieved" },
     ]);
-    expect(out).toEqual([{ url: "https://hotel-x.si/en", title: "Hotel X", domain: "hotel-x.si" }]);
+  });
+
+  it("Anthropic: reads the older array format", () => {
+    const out = normalizeAnthropicCitations([{ type: "web_search_result_location", url: "https://a.si", title: null }]);
+    expect(out).toEqual([{ url: "https://a.si", title: null, domain: "a.si", kind: "cited" }]);
   });
 
   it("Gemini redirect links take the domain from the title", () => {
@@ -38,6 +52,6 @@ describe("citation normalizers", () => {
 
   it("Perplexity search_results", () => {
     const out = normalizePerplexityCitations([{ url: "https://www.tripadvisor.de/Hotel", title: "TA", date: null }]);
-    expect(out).toEqual([{ url: "https://www.tripadvisor.de/Hotel", title: "TA", domain: "tripadvisor.de" }]);
+    expect(out).toEqual([{ url: "https://www.tripadvisor.de/Hotel", title: "TA", domain: "tripadvisor.de", kind: "retrieved" }]);
   });
 });
