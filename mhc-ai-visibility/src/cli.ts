@@ -287,7 +287,7 @@ Usage: npm run cli -- <command> [options]
   list-models                           check with each provider that the configured models exist
   plan --run-name NAME [--notes TEXT]   build the job list and estimate cost (no API calls)
   run --run-name NAME [--limit N] [--engine ID] [--hotel ID]
-                                        start a planned run (--limit = max jobs per engine)
+                                        start a planned run (--limit N = max N jobs per engine, split evenly over its modes)
   resume --run-name NAME [--retry-failed] [--limit N] [--engine ID] [--hotel ID]
                                         continue a started or stopped run
   show --run-name NAME [--limit N] [--engine ID] [--hotel ID] [--max-chars N]

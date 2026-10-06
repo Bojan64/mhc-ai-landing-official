@@ -77,6 +77,15 @@ describe("runner (fake engines, no real API calls)", () => {
     expect(getRun(db, "r")?.status).toBe("stopped");
   });
 
+  it("--limit spreads jobs evenly over an engine's modes", async () => {
+    const { db, config } = setup();
+    await executeRun(db, config, "r", {
+      kind: "run", engine: "anthropic", limitPerEngine: 4, budgetEur: 1000, adapterFactory: fakeFactory().factory, ...quiet,
+    });
+    const modes = db.prepare("SELECT mode, COUNT(*) AS n FROM jobs WHERE status = 'done' GROUP BY mode").all();
+    expect(modes).toEqual([{ mode: "no_search", n: 2 }, { mode: "web_search", n: 2 }]);
+  });
+
   it("retries a 429 and then succeeds", async () => {
     const { db, config } = setup();
     const f = fakeFactory((_, n) => { if (n === 1) throw httpError(429); });

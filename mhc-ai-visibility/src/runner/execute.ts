@@ -187,14 +187,23 @@ export async function executeRun(db: DB, config: AppConfig, runId: string, o: Ex
   };
 }
 
-function limitPerEngine(jobs: JobRow[], limit?: number): JobRow[] {
+/**
+ * Keep at most `limit` jobs per engine, spread evenly over the engine's modes
+ * (e.g. --limit 4 → 2 no_search + 2 web_search), keeping the randomized order.
+ */
+export function limitPerEngine<T extends { engine_id: string; mode: string }>(jobs: T[], limit?: number): T[] {
   if (!limit) return jobs;
-  const counts = new Map<string, number>();
-  return jobs.filter((j) => {
-    const n = counts.get(j.engine_id) ?? 0;
-    counts.set(j.engine_id, n + 1);
-    return n < limit;
-  });
+  const keep = new Set<T>();
+  for (const engineJobs of groupBy(jobs, (j) => j.engine_id).values()) {
+    const queues = [...groupBy(engineJobs, (j) => j.mode).values()];
+    let taken = 0;
+    for (let round = 0; taken < limit && queues.some((q) => q.length > round); round++) {
+      for (const q of queues) {
+        if (taken < limit && q[round]) (keep.add(q[round]), taken++);
+      }
+    }
+  }
+  return jobs.filter((j) => keep.has(j));
 }
 
 function groupBy<T>(items: T[], key: (t: T) => string): Map<string, T[]> {
