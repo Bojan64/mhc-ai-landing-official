@@ -162,10 +162,12 @@ describe("runner (fake engines, no real API calls)", () => {
 
   it("refuses before any call when an API key is missing", async () => {
     const { db, config } = setup();
-    const saved = process.env.OPENAI_API_KEY;
+    const saved = { a: process.env.OPENAI_API_KEY, b: process.env.MHC_OPENAI_API_KEY };
     delete process.env.OPENAI_API_KEY;
+    delete process.env.MHC_OPENAI_API_KEY;
     await expect(executeRun(db, config, "r", { kind: "run", engine: "openai", budgetEur: 1000, ...quiet }))
-      .rejects.toThrow(/OPENAI_API_KEY is not set/);
-    if (saved) process.env.OPENAI_API_KEY = saved;
+      .rejects.toThrow(/MHC_OPENAI_API_KEY is not set/);
+    if (saved.a) process.env.OPENAI_API_KEY = saved.a;
+    if (saved.b) process.env.MHC_OPENAI_API_KEY = saved.b;
   });
 });

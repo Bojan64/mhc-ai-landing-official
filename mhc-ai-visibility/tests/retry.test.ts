@@ -67,9 +67,18 @@ describe("rate limiter", () => {
   });
 });
 
+describe("API key lookup", () => {
+  it("prefers MHC_ names and falls back to the plain name", async () => {
+    const { apiKeyFor } = await import("../src/engines");
+    expect(apiKeyFor("anthropic", { MHC_ANTHROPIC_API_KEY: "a", ANTHROPIC_API_KEY: "b" })).toBe("a");
+    expect(apiKeyFor("anthropic", { ANTHROPIC_API_KEY: "b" })).toBe("b");
+    expect(apiKeyFor("anthropic", { MHC_ANTHROPIC_API_KEY: "" })).toBeUndefined();
+  });
+});
+
 describe("redaction", () => {
   it("removes API keys from text", () => {
-    const env = { OPENAI_API_KEY: "custom-secret-123456" };
+    const env = { MHC_OPENAI_API_KEY: "custom-secret-123456" };
     const text = "bad key custom-secret-123456 and sk-ant-abcdefghij1234 and AIzaSyA1234567890abcdefghijk";
     const out = redact(text, env);
     expect(out).not.toContain("custom-secret");

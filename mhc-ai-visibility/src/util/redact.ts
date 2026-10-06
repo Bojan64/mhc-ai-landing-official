@@ -1,5 +1,6 @@
 const KEY_PATTERNS = [/sk-[A-Za-z0-9_-]{8,}/g, /AIza[0-9A-Za-z_-]{20,}/g, /pplx-[A-Za-z0-9_-]{8,}/g];
-const KEY_VARS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"];
+const BASE_VARS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"];
+const KEY_VARS = [...BASE_VARS, ...BASE_VARS.map((v) => `MHC_${v}`)];
 
 /** Remove anything that looks like an API key before text goes to logs, the DB error column, or reports. */
 export function redact(text: string, env: NodeJS.ProcessEnv = process.env): string {

@@ -5,7 +5,7 @@ import { loadDotEnv, readEnv } from "./config/env";
 import { loadConfig, type AppConfig } from "./config/load";
 import { openDb } from "./db/db";
 import { savePlannedRun } from "./db/repository";
-import { API_KEY_VARS } from "./engines";
+import { API_KEY_VARS, apiKeyFor } from "./engines";
 import { listModels } from "./engines/models";
 import { applicablePrompts } from "./runner/applicability";
 import { executeRun, RunRefused } from "./runner/execute";
@@ -123,7 +123,7 @@ function validateConfig(): number {
   const engineRows: string[][] = [["engine", "model", "modes", "API key"]];
   for (const e of enabled) {
     const keyVar = API_KEY_VARS[e.provider];
-    engineRows.push([e.engine_id, e.model, e.modes.join(" + "), process.env[keyVar] ? "set" : `missing (${keyVar})`]);
+    engineRows.push([e.engine_id, e.model, e.modes.join(" + "), apiKeyFor(e.provider) ? "set" : `missing (${keyVar})`]);
   }
 
   console.log(`\nHotels (${config.hotels.length}):\n${table(hotelRows)}`);
@@ -243,7 +243,7 @@ async function checkModels(): Promise<number> {
   let problems = 0;
   for (const w of wanted) {
     const keyVar = API_KEY_VARS[w.provider];
-    const key = process.env[keyVar];
+    const key = apiKeyFor(w.provider);
     if (!key) {
       console.log(`? ${w.label}: ${keyVar} not set — cannot check "${w.model}"`);
       problems++;
