@@ -1,0 +1,24 @@
+{
+  "_note": "Destination mode: what do AI assistants recommend in one destination? Separate from the hotel-based config. Engines refer to engine_ids in engines.json (prices live there). All questions run in web_search mode only.",
+  "destinations": [
+    { "destination_id": "bled", "name": "Bled", "country": "Slovenia", "location_match": ["bled"] }
+  ],
+  "engines": ["openai", "gemini", "anthropic"],
+  "questions": [
+    { "id": "D1", "segment": "general", "text": "Where should I stay in {d}? Recommend specific hotels." },
+    { "id": "D2", "segment": "families", "text": "Best hotel in {d} for a family with small children." },
+    { "id": "D3", "segment": "couples", "text": "Romantic hotel in {d} for a couple's getaway." },
+    { "id": "D4", "segment": "wellness", "text": "Best spa and wellness hotel in {d} for a relaxing weekend." },
+    { "id": "D5", "segment": "small_personal", "text": "Small, family-run hotel in {d} with personal service." },
+    { "id": "D6", "segment": "active", "text": "Best hotel in {d} for an active holiday (hiking, cycling, outdoor sports)." },
+    { "id": "D7", "segment": "value", "text": "Good value hotel in {d} that isn't too expensive." },
+    { "id": "D8", "segment": "booking", "text": "I want to book a hotel in {d} for next month. Which one do you recommend and where should I book it?" }
+  ],
+  "price_status": {
+    "_note": "How far each price in engines.json is verified. Update a line to 'verified' only after you checked the official pricing page. Token counts per call are always ASSUMPTIONS until measured (see cost_assumptions in engines.json).",
+    "openai": { "status": "unverified", "note": "gpt-6-astra $10/$50 per million tokens and web search $10 per 1000 calls seen only through a search engine's copy of the official page (2026-10-08); enter in engines.json yourself" },
+    "gemini": { "status": "unverified", "note": "official page not reachable; sources disagree on token prices; grounding $14 per 1000 queries not confirmed" },
+    "anthropic": { "status": "verified", "note": "platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-08: Sonnet 5.5 $2/$10, web search $10 per 1000" },
+    "analyzer": { "status": "verified", "note": "same page, checked 2026-10-08: Haiku 4.5 $1/$5" }
+  }
+}

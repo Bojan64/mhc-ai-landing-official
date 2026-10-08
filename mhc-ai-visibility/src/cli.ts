@@ -26,6 +26,11 @@ const LATER: Record<string, string> = {
 
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2);
+  // Destination mode is a separate module with its own commands, options and database.
+  if (command?.startsWith("destination-")) {
+    const { destinationMain, DESTINATION_COMMANDS } = await import("./destination/cli");
+    if ((DESTINATION_COMMANDS as readonly string[]).includes(command)) return destinationMain(command, rest);
+  }
   const { values } = parseArgs({
     args: rest,
     options: {
@@ -292,6 +297,15 @@ Usage: npm run cli -- <command> [options]
                                         continue a started or stopped run
   show --run-name NAME [--limit N] [--engine ID] [--hotel ID] [--max-chars N]
                                         print stored answers with their sources
+
+Destination mode (what do AI assistants recommend in one destination?):
+  destination-validate                  check destination.json, engines and keys
+  destination-plan --run-name NAME [--destination ID] [--repetitions N] [--engines a,b]
+                                        build the job list and estimate cost (no API calls)
+  destination-run --run-name NAME [--engines a,b] [--retry-failed] [--limit N]
+                                        ask the questions, then analyse the answers (hard budget)
+  destination-report --run-name NAME [--out data/FILE.md] [--examples N] [--max-chars N]
+                                        hotel table, manual-check list, cost, verbatim answers
 
 Coming in later phases: analyze, metrics, report, validation-export, validation-compare.`);
 }

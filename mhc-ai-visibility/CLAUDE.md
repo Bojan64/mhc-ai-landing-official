@@ -15,3 +15,5 @@ Key rules (details in SPEC.md):
   `MHC_PERPLEXITY_API_KEY` (plain names without `MHC_` work as fallback). In Claude Code cloud
   sessions `ANTHROPIC_API_KEY` set on the environment does not reach commands, so use the MHC_ name.
   Check a key is present without printing it: `[ -n "$MHC_ANTHROPIC_API_KEY" ] && echo set`.
+- Destination mode (what does AI recommend in one destination?): `docs/DESTINATION.md`. Separate module,
+  config and database; hotel-mode phases 3 and 4 stay frozen until the owner says otherwise.
