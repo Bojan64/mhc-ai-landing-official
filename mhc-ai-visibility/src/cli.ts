@@ -304,6 +304,8 @@ Destination mode (what do AI assistants recommend in one destination?):
                                         build the job list and estimate cost (no API calls)
   destination-run --run-name NAME [--engines a,b] [--retry-failed] [--limit N]
                                         ask the questions, then analyse the answers (hard budget)
+  destination-reanalyze --run-name NAME [--engines a,b]
+                                        analyse stored answers again with the current analyzer (no new questions, hard budget)
   destination-report --run-name NAME [--out data/FILE.md] [--examples N] [--max-chars N]
                                         hotel table, manual-check list, cost, verbatim answers
 

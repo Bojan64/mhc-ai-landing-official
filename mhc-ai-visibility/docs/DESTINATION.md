@@ -27,6 +27,7 @@ own database (`data/destination.db`). Phases 3 and 4 of the hotel mode are untou
 | `destination-validate` | checks the config, API keys and that prices are filled in |
 | `destination-plan --run-name NAME [--destination bled] [--repetitions N] [--engines a,b]` | builds the jobs and prints the cost estimate (verified vs unverified prices). No API call. |
 | `destination-run --run-name NAME [--engines a,b] [--retry-failed] [--limit N]` | asks the questions, then analyses the answers. Continues a stopped run. |
+| `destination-reanalyze --run-name NAME [--engines a,b]` | analyses stored answers again with the current analyzer (only those whose newest analysis is missing or from the first analyzer version). Asks no engine anything, adds new analyses next to the old ones, same hard budget. The first analysis runs alone and stops everything if it is not valid. |
 | `destination-report --run-name NAME [--out data/NAME.md] [--examples N] [--max-chars N]` | hotel table, manual-check list, estimate vs actual cost, extraction examples, verbatim answers |
 
 ## Safety rules

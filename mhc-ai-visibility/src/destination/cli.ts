@@ -10,13 +10,13 @@ import { loadDestinationConfig, type DestinationConfig } from "./config";
 import { getDestRun, openDestDb, savePlannedDestRun } from "./db";
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost, findDestination } from "./plan";
 import { buildReport, renderMarkdown, renderTerminal } from "./report";
-import { DestRunRefused, executeDestinationRun } from "./run";
+import { DestRunRefused, executeDestinationRun, executeReanalysis } from "./run";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CONFIG_DIR = join(ROOT, "config");
 const DB_PATH = join(ROOT, "data", "destination.db");
 
-export const DESTINATION_COMMANDS = ["destination-validate", "destination-plan", "destination-run", "destination-report"] as const;
+export const DESTINATION_COMMANDS = ["destination-validate", "destination-plan", "destination-run", "destination-reanalyze", "destination-report"] as const;
 
 export async function destinationMain(command: string, args: string[]): Promise<number> {
   const { values } = parseArgs({
@@ -44,6 +44,7 @@ export async function destinationMain(command: string, args: string[]): Promise<
       return plan(runName(values["run-name"]), values.destination, int(values.repetitions, "--repetitions"), engineList, values.notes);
     case "destination-run":
       return run(runName(values["run-name"]), engineList, values["retry-failed"], int(values.limit, "--limit"));
+    case "destination-reanalyze": return reanalyze(runName(values["run-name"]), engineList);
     case "destination-report":
       return report(runName(values["run-name"]), values.out, int(values.examples, "--examples") ?? 3, int(values["max-chars"], "--max-chars") ?? 1200);
     default:
@@ -166,6 +167,41 @@ async function run(name: string, engineList: string[] | undefined, retryFailed: 
     console.log(`Cost this session: ${usd(s.spentThisSessionUsd)} ≈ ${eur(s.spentThisSessionUsd * rate)}; total for this run ${eur(s.spentTotalUsd * rate)} of ${eur(env.budgetEur)} budget. Run status: ${s.runStatus}.`);
     console.log(`Next: destination-report --run-name "${name}"`);
     return s.engines.some((e) => e.failed) || s.analysisFailed ? 2 : 0;
+  } catch (e) {
+    if (e instanceof DestRunRefused) {
+      console.log(e.message);
+      return 1;
+    }
+    throw e;
+  } finally {
+    process.off("SIGINT", onSigint);
+    db.close();
+  }
+}
+
+async function reanalyze(name: string, engineList: string[] | undefined): Promise<number> {
+  const cfg = load();
+  if (!cfg) return 1;
+  const env = readEnv();
+  const db = openDestDb(DB_PATH);
+  let interrupted = false;
+  const onSigint = () => {
+    if (interrupted) process.exit(130);
+    interrupted = true;
+    console.log("\nStopping after the calls in progress… (press Ctrl+C again to quit immediately)");
+  };
+  process.on("SIGINT", onSigint);
+  try {
+    const stored = getDestRun(db, name);
+    if (!stored) throw new DestRunRefused(`Run "${name}" does not exist.`);
+    const dest = cfg.destination.destinations.find((d) => d.destination_id === stored.destination_id);
+    if (!dest) throw new DestRunRefused(`Destination "${stored.destination_id}" is no longer in destination.json.`);
+    const s = await executeReanalysis(db, cfg, name, dest, { engines: engineList, budgetEur: env.budgetEur, shouldStop: () => interrupted });
+    const rate = cfg.engines.usd_to_eur;
+    console.log(`\nAnalyses: ${s.analyzed} valid, ${s.analysisFailed} failed or invalid, of ${s.candidates} answer(s).`);
+    console.log(`Cost this session: ${usd(s.spentUsd)} ≈ ${eur(s.spentUsd * rate)} (estimate ${usd(s.estimatedUsd)}); total for this run ${eur(s.spentTotalUsd * rate)} of ${eur(env.budgetEur)} budget.`);
+    console.log(`Next: destination-report --run-name "${name}" --out data/${name}-v2.md`);
+    return s.analysisFailed ? 2 : 0;
   } catch (e) {
     if (e instanceof DestRunRefused) {
       console.log(e.message);

@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { parseStoredAnalysis } from "./schemas";
 
 export type DestDB = Database.Database;
 
@@ -209,6 +210,25 @@ export function selectUnanalyzed(db: DestDB, runId: string, engines?: string[]):
         AND NOT EXISTS (SELECT 1 FROM dest_analyses a WHERE a.job_id = j.job_id AND a.schema_valid = 1)
       ORDER BY j.sequence`,
   ).all(runId, ...(engines ?? [])) as (DestJobRow & { raw_answer: string; api_citations_json: string })[];
+}
+
+/**
+ * Done jobs whose newest valid analysis is missing or still in the first analyzer format.
+ * Used to re-analyse stored answers without asking the engines anything again.
+ */
+export function selectStaleAnalyses(db: DestDB, runId: string, engines?: string[]): (DestJobRow & { raw_answer: string; api_citations_json: string })[] {
+  const eng = engines?.length ? ` AND j.engine_id IN (${engines.map(() => "?").join(", ")})` : "";
+  const rows = db.prepare(
+    `SELECT j.*, r.raw_answer, r.api_citations_json,
+            (SELECT analysis_json FROM dest_analyses a WHERE a.job_id = j.job_id AND a.schema_valid = 1 ORDER BY analysis_id DESC LIMIT 1) AS analysis_json
+       FROM dest_jobs j JOIN dest_responses r ON r.response_id = (SELECT MAX(response_id) FROM dest_responses WHERE job_id = j.job_id)
+      WHERE j.run_id = ? AND j.status = 'done'${eng}
+      ORDER BY j.sequence`,
+  ).all(runId, ...(engines ?? [])) as (DestJobRow & { raw_answer: string; api_citations_json: string; analysis_json: string | null })[];
+  return rows.filter((r) => {
+    const parsed = r.analysis_json ? parseStoredAnalysis(r.analysis_json) : null;
+    return !parsed || parsed.legacy;
+  });
 }
 
 export interface DestAnalysisInput {

@@ -8,7 +8,7 @@ import { createAnthropicAnalyzer, type AnalyzeFn } from "./analyzer";
 import type { DestinationConfig } from "./config";
 import {
   destSpentUsd, getDestRun, markDestFailed, markDestRunEnded, markDestRunStarted, recordDestAttempt,
-  saveDestAnalysis, saveDestResponse, selectDestJobs, selectUnanalyzed, type DestDB, type DestJobRow,
+  saveDestAnalysis, saveDestResponse, selectDestJobs, selectStaleAnalyses, selectUnanalyzed, type DestDB, type DestJobRow,
 } from "./db";
 import { callCost, checkDestinationBudget, estimateDestinationCost } from "./plan";
 import { type Destination } from "./schemas";
@@ -242,4 +242,117 @@ export function limitJobs<T extends { engine_id: string }>(jobs: T[], limit?: nu
     taken.set(j.engine_id, n + 1);
     return true;
   });
+}
+
+// ---------------- re-analysis of stored answers (no question is asked to any engine) ----------------
+
+export interface ReanalyzeOptions {
+  engines?: string[];
+  budgetEur: number | null;
+  log?: (line: string) => void;
+  analyzerFactory?: (cfg: DestinationConfig) => AnalyzeFn;
+  retry?: Partial<RetryOptions>;
+  shouldStop?: () => boolean;
+}
+
+export interface ReanalyzeSummary {
+  candidates: number;
+  analyzed: number;
+  analysisFailed: number;
+  estimatedUsd: number;
+  spentUsd: number;
+  spentTotalUsd: number;
+  stopReason: "completed" | "budget" | "interrupted" | "first_invalid";
+}
+
+/**
+ * Analyses again the stored answers whose newest valid analysis is missing or in the first analyzer format.
+ * New analyses are added next to the old ones (append-only); answers are not touched. Same budget gate as a run.
+ * The first analysis runs alone: if it is not valid, nothing else is started.
+ */
+export async function executeReanalysis(
+  db: DestDB, cfg: DestinationConfig, runId: string, dest: Destination, o: ReanalyzeOptions,
+): Promise<ReanalyzeSummary> {
+  const log = o.log ?? console.log;
+  const run = getDestRun(db, runId);
+  if (!run) throw new DestRunRefused(`Run "${runId}" does not exist.`);
+  const engines = new Set(cfg.engines.engines.map((e) => e.engine_id));
+  for (const id of o.engines ?? []) if (!engines.has(id)) throw new DestRunRefused(`Unknown engine "${id}".`);
+
+  const queue = selectStaleAnalyses(db, runId, o.engines);
+  const rate = cfg.engines.usd_to_eur;
+  const full = estimateDestinationCost(cfg, queue);
+  // only the analyzer line: the answers are not asked again
+  const line = full.lines.find((l) => l.key === "analyzer")!;
+  const estimatedUsd = line.totalUsd ?? 0;
+  const est = {
+    ...full, lines: [line], knownUsd: estimatedUsd, knownEur: estimatedUsd * rate, incomplete: line.totalUsd === null,
+    verifiedUsd: line.priceStatus === "verified" ? estimatedUsd : 0, unverifiedUsd: line.priceStatus === "verified" ? 0 : estimatedUsd,
+  };
+  const spentBeforeUsd = destSpentUsd(db, runId);
+  const check = checkDestinationBudget(est, o.budgetEur, spentBeforeUsd * rate);
+  if (!check.ok) throw new DestRunRefused(`Re-analysis refused:\n  - ${check.reasons.join("\n  - ")}`);
+  const budgetEur = o.budgetEur as number;
+  const summary: ReanalyzeSummary = { candidates: queue.length, analyzed: 0, analysisFailed: 0, estimatedUsd, spentUsd: 0, spentTotalUsd: spentBeforeUsd, stopReason: "completed" };
+  if (!queue.length) { log("Nothing to re-analyse: every answer already has an analysis in the current format."); return summary; }
+
+  const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.engines, c.sourceDomains)))(cfg);
+  log(`Re-analysing ${queue.length} stored answer(s) of run "${runId}" (${dest.name}); no engine is asked again. Estimated cost €${est.knownEur.toFixed(2)}; already spent on this run €${(spentBeforeUsd * rate).toFixed(2)}; hard budget €${budgetEur.toFixed(2)}.`);
+
+  const retry: RetryOptions = { ...DEFAULT_RETRY, ...o.retry, onAttempt: undefined };
+  const limiter = new Limiter(cfg.engines.analyzer.max_concurrency, cfg.engines.analyzer.requests_per_minute);
+  const perAnalysis = est.perCallUsd.analyzer ?? 0;
+  let reservedUsd = 0;
+  let observedMax = 0;
+  const overBudget = (next: number) => (spentBeforeUsd + summary.spentUsd + reservedUsd + next) * rate > budgetEur;
+
+  const one = async (job: (typeof queue)[number]): Promise<boolean> => {
+    const reserve = Math.max(perAnalysis, observedMax);
+    reservedUsd += reserve;
+    const tag = `analyzer  ${job.engine_id} ${job.question_id} rep${job.repetition}`;
+    try {
+      const out = await withRetry(() => limiter.run(() => analyze({ question: job.prompt_text_rendered, answer: job.raw_answer, destination: dest })), retry);
+      saveDestAnalysis(db, job.job_id, {
+        analyzer_model: cfg.engines.analyzer.model,
+        analysis_json: out.analysis ? JSON.stringify(out.analysis) : null,
+        raw_output: out.raw_output, schema_valid: out.analysis !== null, error: out.error,
+        input_tokens: out.input_tokens, output_tokens: out.output_tokens, cost_estimate: out.cost_usd,
+      });
+      summary.spentUsd += out.cost_usd ?? 0;
+      observedMax = Math.max(observedMax, out.cost_usd ?? 0);
+      if (out.analysis) { summary.analyzed++; log(`${tag} ok (${out.analysis.hotels.length} hotels) $${(out.cost_usd ?? 0).toFixed(4)}`); return true; }
+      summary.analysisFailed++;
+      log(`${tag} INVALID: ${out.error}`);
+      return false;
+    } catch (e) {
+      summary.analysisFailed++;
+      log(`${tag} FAILED ${redact((e as Error).message).split("\n")[0].slice(0, 200)}`);
+      return false;
+    } finally {
+      reservedUsd -= reserve;
+    }
+  };
+
+  const stopNow = (next: number) => {
+    if (summary.stopReason !== "completed") return true;
+    if (overBudget(next)) summary.stopReason = "budget";
+    else if (o.shouldStop?.()) summary.stopReason = "interrupted";
+    return summary.stopReason !== "completed";
+  };
+
+  // the first analysis alone: if it is not valid, stop at once
+  if (!stopNow(perAnalysis)) {
+    const first = queue.shift()!;
+    if (!(await one(first))) summary.stopReason = "first_invalid";
+  }
+  const workers = Array.from({ length: cfg.engines.analyzer.max_concurrency }, async () => {
+    while (queue.length && !stopNow(Math.max(perAnalysis, observedMax))) await one(queue.shift()!);
+  });
+  await Promise.all(workers);
+
+  summary.spentTotalUsd = spentBeforeUsd + summary.spentUsd;
+  if (summary.stopReason === "budget") log(`■ Stopped: the next call would exceed the hard budget of €${budgetEur.toFixed(2)}.`);
+  if (summary.stopReason === "first_invalid") log("■ Stopped: the first analysis was not valid, so no other answer was analysed.");
+  if (summary.stopReason === "interrupted") log("■ Stopped on request.");
+  return summary;
 }

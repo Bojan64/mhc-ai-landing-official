@@ -8,10 +8,10 @@ import type { EngineResult } from "../src/engines/types";
 import { aggregate, classifyUrl, extractUrls, nameKey, type AnswerForAggregation } from "../src/destination/aggregate";
 import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerUserMessage, type AnalyzeFn } from "../src/destination/analyzer";
 import { loadDestinationConfig, type DestinationConfig } from "../src/destination/config";
-import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, selectDestAnswers } from "../src/destination/db";
+import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, selectDestAnswers, selectStaleAnalyses } from "../src/destination/db";
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
 import { buildReport, renderHeader, renderHotelTable, renderMarkdown } from "../src/destination/report";
-import { executeDestinationRun, DestRunRefused } from "../src/destination/run";
+import { executeDestinationRun, DestRunRefused, executeReanalysis } from "../src/destination/run";
 import { AnalysisSchema, parseStoredAnalysis, type Analysis, type Destination } from "../src/destination/schemas";
 import { CONFIG_DIR } from "./helpers";
 
@@ -439,3 +439,62 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     expect(renderHeader(rep)).toContain("first analyzer version");
   });
 });
+
+describe("re-analysis of stored answers (no engine is asked again)", () => {
+  const OLD = JSON.stringify({ hotels: [{ name: "Old", lodging_type: "hotel", recommended: true, location_stated: "Bled", booking_target: "ota", booking_evidence: "Booking.com score", quote: "Old" }], no_hotels_reason: null });
+  const count = (db: ReturnType<typeof openDestDb>, table: string) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  async function runWithOldAnalyses() {
+    const c = pricedConfig();
+    const { db } = setupRun(c, 1);
+    const okFactory: AdapterFactory = (engine) => ({ engine, call: async (req) => okResult(`${engine.engine_id}: ${req.prompt}`) });
+    await executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: okFactory, analyzerFactory: () => fakeAnalyzer().fn, ...quiet });
+    // every answer's newest analysis is now a first-version one
+    for (const a of selectDestAnswers(db, "r"))
+      saveDestAnalysis(db, a.job.job_id, { analyzer_model: "old", analysis_json: OLD, raw_output: OLD, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
+    return { c, db };
+  }
+
+  it("analyses first-version answers again, adds new rows, keeps old rows and answers, and asks no engine", async () => {
+    const { c, db } = await runWithOldAnalyses();
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
+    const answersBefore = count(db, "dest_responses");
+    const analysesBefore = count(db, "dest_analyses");
+    const an = fakeAnalyzer(["Hotel New"]);
+    const s = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => an.fn, ...quiet });
+    expect(s).toMatchObject({ candidates: 24, analyzed: 24, analysisFailed: 0, stopReason: "completed" });
+    expect(an.calls()).toBe(24);
+    expect(count(db, "dest_responses")).toBe(answersBefore);
+    expect(count(db, "dest_analyses")).toBe(analysesBefore + 24);
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(0);
+    const rep = buildReport(db, c, "r");
+    expect(rep.legacyAnalyses).toBe(0);
+    expect(rep.agg.hotels.map((h) => h.name)).toEqual(["Hotel New"]);
+    // a second call has nothing to do and costs nothing
+    const again = fakeAnalyzer();
+    const s2 = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => again.fn, ...quiet });
+    expect(s2.candidates).toBe(0);
+    expect(again.calls()).toBe(0);
+  });
+
+  it("uses the same budget gate: refuses without a budget or above it, before any call", async () => {
+    const { c, db } = await runWithOldAnalyses();
+    const an = fakeAnalyzer();
+    await expect(executeReanalysis(db, c, "r", BLED, { budgetEur: null, analyzerFactory: () => an.fn, ...quiet })).rejects.toThrow(/BUDGET_EUR/);
+    await expect(executeReanalysis(db, c, "r", BLED, { budgetEur: 0.0001, analyzerFactory: () => an.fn, ...quiet })).rejects.toThrow(DestRunRefused);
+    expect(an.calls()).toBe(0);
+  });
+
+  it("stops at once when the first analysis is not valid", async () => {
+    const { c, db } = await runWithOldAnalyses();
+    let n = 0;
+    const bad: AnalyzeFn = async () => (n++, { analysis: null, raw_output: "{}", error: "schema: hotels.0.sentiment_quote sentiment_quote has more than 25 words", input_tokens: 10, output_tokens: 10, cost_usd: 0.001 });
+    const lines: string[] = [];
+    const s = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => bad, log: (l) => lines.push(l) });
+    expect(n).toBe(1);
+    expect(s.stopReason).toBe("first_invalid");
+    expect(lines.join("\n")).toContain("more than 25 words");
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
+  });
+});
+
