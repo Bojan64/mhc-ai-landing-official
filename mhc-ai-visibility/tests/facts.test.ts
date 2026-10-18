@@ -21,10 +21,11 @@ const answer = (job_id: number, engine_id: string, question_id: string, raw_answ
 });
 
 const analysis = (name: string, sentiment: "recommended" | "neutral" | "not_recommended", sentiment_quote = "q"): Analysis => ({
+  analyzer_version: "v3",
   no_hotels_reason: null,
   hotels: [{
     name, lodging_type: "hotel", location_stated: "Bled", sentiment, sentiment_quote, booking_target: "unspecified", booking_evidence: null,
-    cited_sources: [], linked_urls: [], possible_duplicate_of: null, quote: name,
+    cited_sources: [], linked_urls: [], possible_duplicate_of: null, quote: name, quote_truncated: false,
   }],
 });
 

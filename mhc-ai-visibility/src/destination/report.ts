@@ -16,8 +16,8 @@ export interface ReportData {
   answers: DestAnswerRow[];
   analyses: Map<number, Analysis>;
   invalidAnalyses: number;
-  /** Answers whose analysis comes from the first analyzer version (booking and sentiment fields are not comparable). */
-  legacyAnalyses: number;
+  /** Answers whose newest analysis is from an older analyzer version (booking and sentiment fields are not comparable). */
+  olderAnalyses: number;
   agg: Aggregation;
   /** Recommendations of hotels that hand-checked facts say are closed. */
   closedAudit: ClosedAudit[];
@@ -95,7 +95,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, legacyAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -115,7 +115,7 @@ export function renderHeader(r: ReportData): string {
     lines.push(`⚠ ENGINE MISSING: ${e.engine_id} produced NO answers (${e.lastError ?? "not run"}). Results below come only from: ${r.engineStatus.filter((x) => x.done > 0).map((x) => x.engine_id).join(", ") || "(none)"}.`);
   for (const e of partial) lines.push(`⚠ ${e.engine_id}: only ${e.done} of ${e.planned} planned answers (${e.lastError ?? "stopped"}). Counts for this engine are lower for that reason.`);
   if (r.invalidAnalyses) lines.push(`⚠ ${r.invalidAnalyses} answer(s) have no valid analysis and are NOT in the counts.`);
-  if (r.legacyAnalyses) lines.push(`⚠ ${r.legacyAnalyses} answer(s) still carry an analysis from the first analyzer version: their booking column shows "unspecified" and they have no sentiment quote. Re-analyse them for comparable booking data.`);
+  if (r.olderAnalyses) lines.push(`⚠ ${r.olderAnalyses} answer(s) still carry an analysis from an older analyzer version (not comparable with the current rules for booking and quotes). Re-analyse them with destination-reanalyze.`);
   return lines.join("\n");
 }
 
@@ -170,7 +170,7 @@ export function renderClosedHotels(r: ReportData): string {
     );
     const bad = c.items.filter((i) => i.sentiment !== "not_recommended");
     if (!bad.length) out.push("  (none)");
-    for (const i of bad) out.push(`  ${i.engine_id} ${i.question_id} — ${i.sentiment}${i.quote ? `: "${i.quote}"` : " (analysis from the first analyzer version, no quote)"}${i.closureLine ? "  [the same answer also mentions a closure — see below]" : ""}`);
+    for (const i of bad) out.push(`  ${i.engine_id} ${i.question_id} — ${i.sentiment}${i.quote ? `: "${i.quote}"` : " (analysis from an older analyzer version, no quote)"}${i.closureLine ? "  [the same answer also mentions a closure — see below]" : ""}`);
     out.push("", "Where the engine itself mentions the closure (heuristic: a line that names the hotel and a closure word; check by eye):");
     const said = c.items.filter((i) => i.closureLine);
     if (!said.length) out.push("  (none)");
@@ -194,7 +194,7 @@ function renderAnalysisLine(a: Analysis | undefined): string {
   if (!a) return "  (no valid analysis)";
   if (!a.hotels.length) return `  extracted: no hotel named${a.no_hotels_reason ? ` — ${a.no_hotels_reason}` : ""}`;
   return a.hotels.map((h, i) => {
-    const head = `  ${i + 1}. ${h.name} [${h.lodging_type}] location: ${h.location_stated ?? "—"} | ${h.sentiment}${h.sentiment_quote ? ` ("${clip(h.sentiment_quote, 140)}")` : ""}`;
+    const head = `  ${i + 1}. ${h.name} [${h.lodging_type}] location: ${h.location_stated ?? "—"} | ${h.sentiment}${h.sentiment_quote ? ` ("${clip(h.sentiment_quote, 140)}"${h.quote_truncated ? " [quote cut to 25 words]" : ""})` : ""}`;
     const book = `     booking: ${h.booking_target}${h.booking_evidence ? ` ("${clip(h.booking_evidence, 90)}")` : ""}`;
     const extra = [
       h.cited_sources.length ? `cited: ${h.cited_sources.join(", ")}` : "",

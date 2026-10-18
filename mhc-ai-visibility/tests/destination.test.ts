@@ -12,7 +12,7 @@ import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, select
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
 import { buildReport, renderHeader, renderHotelTable, renderMarkdown } from "../src/destination/report";
 import { executeDestinationRun, DestRunRefused, executeReanalysis } from "../src/destination/run";
-import { AnalysisSchema, parseStoredAnalysis, type Analysis, type Destination } from "../src/destination/schemas";
+import { ANALYZER_VERSION, AnalysisSchema, finalizeAnalysis, ModelAnalysisSchema, parseStoredAnalysis, truncateQuote, type Analysis, type Destination } from "../src/destination/schemas";
 import { CONFIG_DIR } from "./helpers";
 
 const quiet = { log: () => {}, retry: { sleep: async () => {}, maxAttempts: 2 } };
@@ -46,10 +46,11 @@ function pricedConfig(): DestinationConfig {
 }
 
 const hotelsIn = (names: string[], overrides: Partial<Analysis["hotels"][number]> = {}): Analysis => ({
+  analyzer_version: ANALYZER_VERSION,
   hotels: names.map((name) => ({
     name, lodging_type: "hotel" as const, location_stated: "Bled", sentiment: "recommended" as const, sentiment_quote: `try ${name}`,
     booking_target: "unspecified" as const, booking_evidence: null, cited_sources: [] as string[], linked_urls: [] as string[],
-    possible_duplicate_of: null, quote: name, ...overrides,
+    possible_duplicate_of: null, quote: name, quote_truncated: false, ...overrides,
   })),
   no_hotels_reason: null,
 });
@@ -260,18 +261,36 @@ describe("analyzer prompt and schema", () => {
     expect(AnalysisSchema.safeParse({ hotels: [{ name: "A" }], no_hotels_reason: null }).success).toBe(false);
   });
 
-  it("limits the sentiment quote to 25 words", () => {
+  it("never rejects an analysis for a long sentiment quote: the code cuts it at 25 words and marks it", () => {
     const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
-    expect(AnalysisSchema.safeParse(hotelsIn(["A"], { sentiment_quote: words(25) })).success).toBe(true);
-    expect(AnalysisSchema.safeParse(hotelsIn(["A"], { sentiment_quote: words(26) })).success).toBe(false);
+    expect(truncateQuote(words(25))).toEqual({ quote: words(25), truncated: false });
+    const cut = truncateQuote(words(26));
+    expect(cut.truncated).toBe(true);
+    expect(cut.quote).toBe(`${words(25)}…`);
+    const base = (name: string, q: string) => { const { quote_truncated: _t, ...h } = hotelsIn([name]).hotels[0]; return { ...h, sentiment_quote: q }; };
+    const model = ModelAnalysisSchema.parse({
+      hotels: [base("A", words(40)), base("B", words(10))],
+      no_hotels_reason: null,
+    });
+    const out = finalizeAnalysis(model);
+    expect(out.analyzer_version).toBe(ANALYZER_VERSION);
+    expect(out.hotels.map((h) => h.quote_truncated)).toEqual([true, false]);
+    expect(out.hotels[0].sentiment_quote.split(/\s+/).length).toBe(25);
+    expect(AnalysisSchema.safeParse(out).success).toBe(true);
+    // the tool schema the model sees has neither the version nor the truncation flag
+    const props = (z.toJSONSchema(ModelAnalysisSchema) as any).properties;
+    expect(props.analyzer_version).toBeUndefined();
+    expect(props.hotels.items.properties.quote_truncated).toBeUndefined();
   });
 
-  it("tells the analyzer that only an explicit instruction is a booking pointer, and to flag duplicates without merging", () => {
-    expect(ANALYZER_SYSTEM_PROMPT).toContain("ONLY from an explicit instruction");
-    expect(ANALYZER_SYSTEM_PROMPT).toContain("a score, rating or review taken from Booking.com, Tripadvisor");
-    expect(ANALYZER_SYSTEM_PROMPT).toContain("link to the accommodation's own website that is only there as a source");
+  it("tells the analyzer: 20-word quotes, explicit pointers for THIS hotel only, with negative and positive examples", () => {
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("AT MOST 20 words");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("explicit pointer to book THIS accommodation");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("Vila Bled described with only");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("Vila Alpina");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("Rikli Balance Hotel");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("Old Bled House with \"Its official booking site is Charming Bled\"");
     expect(ANALYZER_SYSTEM_PROMPT).toContain("never merge or drop entries");
-    expect(ANALYZER_SYSTEM_PROMPT).toContain("AT MOST 25 words");
   });
 
   it("still reads analyses stored by the first analyzer version, without guessing their booking data", () => {
@@ -290,6 +309,15 @@ describe("analyzer prompt and schema", () => {
     expect(fresh.legacy).toBe(false);
     expect(parseStoredAnalysis("{}")).toBeNull();
     expect(parseStoredAnalysis("not json")).toBeNull();
+  });
+
+  it("reads second-version analyses (no version field) as version v2, not current", () => {
+    const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
+    const v2 = { ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, ...h }) => h) };
+    const r = parseStoredAnalysis(JSON.stringify(v2))!;
+    expect(r.analysis.analyzer_version).toBe("v2");
+    expect(r.legacy).toBe(true);
+    expect(r.analysis.hotels[0].quote_truncated).toBe(false);
   });
 });
 
@@ -424,10 +452,10 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     expect(rep.cost.actualUsd).toBeGreaterThan(0);
     expect(md).toContain('recommended ("try Hotel Alpha")');
     expect(md).toContain("book dir/ota/portal/unspec");
-    expect(rep.legacyAnalyses).toBe(0);
+    expect(rep.olderAnalyses).toBe(0);
   });
 
-  it("warns in the report when an answer still has a first-version analysis", async () => {
+  it("warns in the report when an answer still has an older-version analysis", async () => {
     const c = pricedConfig();
     const { db } = setupRun(c, 1);
     await executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: fake().factory, analyzerFactory: () => fakeAnalyzer().fn, ...quiet });
@@ -435,8 +463,8 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     const jobId = (db.prepare("SELECT job_id FROM dest_jobs ORDER BY job_id LIMIT 1").get() as { job_id: number }).job_id;
     saveDestAnalysis(db, jobId, { analyzer_model: "old", analysis_json: old, raw_output: old, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
     const rep = buildReport(db, c, "r");
-    expect(rep.legacyAnalyses).toBe(1);
-    expect(renderHeader(rep)).toContain("first analyzer version");
+    expect(rep.olderAnalyses).toBe(1);
+    expect(renderHeader(rep)).toContain("older analyzer version");
   });
 });
 
@@ -468,13 +496,27 @@ describe("re-analysis of stored answers (no engine is asked again)", () => {
     expect(count(db, "dest_analyses")).toBe(analysesBefore + 24);
     expect(selectStaleAnalyses(db, "r")).toHaveLength(0);
     const rep = buildReport(db, c, "r");
-    expect(rep.legacyAnalyses).toBe(0);
+    expect(rep.olderAnalyses).toBe(0);
     expect(rep.agg.hotels.map((h) => h.name)).toEqual(["Hotel New"]);
     // a second call has nothing to do and costs nothing
     const again = fakeAnalyzer();
     const s2 = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => again.fn, ...quiet });
     expect(s2.candidates).toBe(0);
     expect(again.calls()).toBe(0);
+  });
+
+  it("selects answers whose newest valid analysis is not the current version, and skips current ones", async () => {
+    const { c, db } = await runWithOldAnalyses();
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
+    const first = selectDestAnswers(db, "r")[0];
+    const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
+    const v2 = JSON.stringify({ ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, ...h }) => h) });
+    saveDestAnalysis(db, first.job.job_id, { analyzer_model: "m", analysis_json: v2, raw_output: v2, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(24); // v2 is still not current
+    const cur = JSON.stringify(hotelsIn(["A"]));
+    saveDestAnalysis(db, first.job.job_id, { analyzer_model: "m", analysis_json: cur, raw_output: cur, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
+    expect(selectStaleAnalyses(db, "r")).toHaveLength(23);
+    void c;
   });
 
   it("uses the same budget gate: refuses without a budget or above it, before any call", async () => {

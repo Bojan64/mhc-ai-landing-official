@@ -4,7 +4,7 @@ import type { EnginesConfig } from "../config/schemas";
 import { apiKeyFor } from "../engines";
 import { classifyUrl, extractUrls } from "./aggregate";
 import type { SourceDomains } from "../config/schemas";
-import { AnalysisSchema, type Analysis, type Destination } from "./schemas";
+import { finalizeAnalysis, ModelAnalysisSchema, type Analysis, type Destination } from "./schemas";
 import { callCost } from "./plan";
 
 export const TOOL_NAME = "record_destination_analysis";
@@ -19,14 +19,18 @@ Rules:
 - lodging_type: what the answer calls it; "hotel" if unclear.
 - location_stated: the place the answer gives for that accommodation (town, area, address part). null if the answer does not say.
 - sentiment: "recommended" if the answer offers it as an option for the guest to consider; "not_recommended" if it is named only as a warning, a contrast, something closed or unavailable, or something to avoid; "neutral" if it is only mentioned without a clear recommendation either way.
-- sentiment_quote: an exact quote of AT MOST 25 words from the answer on which the sentiment is based. Copy the words exactly; never paraphrase.
-- booking_target: decide ONLY from an explicit instruction in the answer about where the guest should book THIS accommodation:
-  "direct" = book on the accommodation's own website, or by phoning or e-mailing it;
+- sentiment_quote: an exact quote of AT MOST 20 words from the answer on which the sentiment is based. Count the words. If the sentence is longer, quote only the part that carries the sentiment. Copy the words exactly; never paraphrase.
+- booking_target: decide ONLY from an explicit pointer in the answer that tells the guest where to book THIS accommodation:
+  "direct" = book on the accommodation's own website or its official booking site, or by phoning or e-mailing it;
   "ota" = an online travel agency or booking platform is named as the place to book it (e.g. "book it on Booking.com");
   "portal" = a tourism portal or tourist board is named as the place to book or enquire (e.g. bled.si);
-  "unspecified" = the answer gives no such instruction for it.
-  These do NOT count as booking instructions and give "unspecified": a score, rating or review taken from Booking.com, Tripadvisor or another site; a link to the accommodation's own website that is only there as a source or for information; general advice that is not about this accommodation ("compare prices on Booking.com and the hotel's site"). The link list shows the type of each domain; use it only to name the kind of site, not to infer an instruction.
-- booking_evidence: the exact words of the instruction that show booking_target; null when booking_target is "unspecified".
+  "unspecified" = the answer gives no such pointer for it. This is the normal case; most accommodations are "unspecified".
+- booking_evidence: the exact words of the pointer. It must be an explicit pointer to book THIS accommodation. If you cannot quote such words, booking_target MUST be "unspecified" and booking_evidence null.
+  These are NOT booking pointers and give "unspecified":
+  1. a link in brackets or after a sentence that is only the source of the information, e.g. "(bled.si)" or "([bled.si](https://www.bled.si/...))" after a description;
+  2. general advice that is not about this accommodation, e.g. "if the price and cancellation terms are similar, I'd book direct" or "compare prices on Booking.com and the hotel's site";
+  3. a statement that the accommodation appears in a list or on a site, or has a rating there, e.g. "it appears among Booking.com's budget-friendly Bled options" or "Booking.com guest scores are around 9.5".
+  Examples. Vila Bled described with only "([bled.si](https://www.bled.si/en/accommodation/.../vila-bled/))" as its source: "unspecified" (the link is a source). Vila Alpina with "it currently appears among Booking.com's budget-friendly Bled options": "unspecified" (a list mention). Rikli Balance Hotel in an answer that says "my booking rule: if the total price and cancellation terms are similar, I'd book direct": "unspecified" (a general rule). Old Bled House with "Its official booking site is Charming Bled": "direct", booking_evidence "Its official booking site is Charming Bled" (a pointer to where to book this property).
 - cited_sources: the sites or sources the answer cites for this accommodation (e.g. "Booking.com", "Tripadvisor", "bled.si"), as short names. Empty list if none. A cited source is not a booking instruction.
 - linked_urls: every URL the answer attaches to this accommodation, exactly as written, whatever its role (own site, tourism board, review page). Empty list if none.
 - possible_duplicate_of: if the name looks like another accommodation listed in the same answer (similar words, a variant spelling, one name contained in the other), put that other name exactly as written; otherwise null. Only flag the resemblance; never merge or drop entries, and do not decide whether they are really the same place, even if the answer says they are separate.
@@ -71,7 +75,7 @@ export function buildAnalyzerUserMessage(input: AnalyzerInput, domains: SourceDo
 }
 
 function toolSchema(): Anthropic.Tool["input_schema"] {
-  const { $schema: _ignored, ...schema } = z.toJSONSchema(AnalysisSchema) as Record<string, unknown>;
+  const { $schema: _ignored, ...schema } = z.toJSONSchema(ModelAnalysisSchema) as Record<string, unknown>;
   return schema as Anthropic.Tool["input_schema"];
 }
 
@@ -110,12 +114,13 @@ export function createAnthropicAnalyzer(engines: EnginesConfig, domains: SourceD
     const cost = callCost(cfg.pricing, { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, searches: 0 }).totalUsd;
     const base = { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, cost_usd: cost };
     if (!block) return { analysis: null, raw_output: JSON.stringify(res.content), error: "analyzer did not call the tool", ...base };
-    const parsed = AnalysisSchema.safeParse(block.input);
+    const parsed = ModelAnalysisSchema.safeParse(block.input);
     if (!parsed.success)
       return {
         analysis: null, raw_output: JSON.stringify(block.input),
         error: `schema: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`, ...base,
       };
-    return { analysis: parsed.data, raw_output: JSON.stringify(block.input), error: null, ...base };
+    // over-long sentiment quotes are cut here, never rejected
+    return { analysis: finalizeAnalysis(parsed.data), raw_output: JSON.stringify(block.input), error: null, ...base };
   };
 }

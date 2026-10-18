@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { parseStoredAnalysis } from "./schemas";
+import { ANALYZER_VERSION, parseStoredAnalysis } from "./schemas";
 
 export type DestDB = Database.Database;
 
@@ -213,7 +213,7 @@ export function selectUnanalyzed(db: DestDB, runId: string, engines?: string[]):
 }
 
 /**
- * Done jobs whose newest valid analysis is missing or still in the first analyzer format.
+ * Done jobs whose newest valid analysis is missing or not from the current analyzer version.
  * Used to re-analyse stored answers without asking the engines anything again.
  */
 export function selectStaleAnalyses(db: DestDB, runId: string, engines?: string[]): (DestJobRow & { raw_answer: string; api_citations_json: string })[] {
@@ -227,7 +227,7 @@ export function selectStaleAnalyses(db: DestDB, runId: string, engines?: string[
   ).all(runId, ...(engines ?? [])) as (DestJobRow & { raw_answer: string; api_citations_json: string; analysis_json: string | null })[];
   return rows.filter((r) => {
     const parsed = r.analysis_json ? parseStoredAnalysis(r.analysis_json) : null;
-    return !parsed || parsed.legacy;
+    return !parsed || parsed.analysis.analyzer_version !== ANALYZER_VERSION;
   });
 }
 

@@ -10,10 +10,13 @@ own database (`data/destination.db`). Phases 3 and 4 of the hotel mode are untou
 2. Stores every answer and its sources unchanged (append-only).
 3. An analyzer (Claude Haiku, forced tool call) extracts per answer, for every named lodging in order of first mention:
    - the location the answer gives;
-   - `sentiment` (`recommended` / `neutral` / `not_recommended`) with `sentiment_quote`, an exact quote of at most 25 words it is based on;
-   - `booking_target`, decided ONLY from an explicit instruction in the answer about where to book that lodging:
-     `direct` (own site or phone/e-mail of the lodging), `ota` (an online travel agency named as the place to book),
-     `portal` (a tourism portal such as bled.si), `unspecified` (no such instruction), with `booking_evidence` = the exact words;
+   - `sentiment` (`recommended` / `neutral` / `not_recommended`) with `sentiment_quote`: an exact quote it is based on. The model is asked
+     for at most 20 words; the code cuts anything over 25 words to 25 words + "…" and sets `quote_truncated: true`. A long quote never makes an analysis invalid;
+   - `booking_target`, decided ONLY from an explicit pointer in the answer that tells the guest where to book THAT lodging:
+     `direct` (own or official booking site, phone/e-mail of the lodging), `ota` (an online travel agency named as the place to book),
+     `portal` (a tourism portal such as bled.si), `unspecified` (no such pointer; the normal case), with `booking_evidence` = the exact words.
+     Not pointers: a bracketed link that is only the source, a general rule ("book direct if prices are equal"), a list or rating mention
+     ("appears among Booking.com's options"). The prompt gives Vila Bled, Vila Alpina and Rikli as negative and Old Bled House as positive example;
    - `cited_sources`: sources the answer cites for it (Booking.com or Tripadvisor as the source of a score). These are NOT booking instructions;
    - `linked_urls`: every URL the answer attaches to it. A link to the lodging's own site without a booking instruction is `unspecified`, not `direct`;
    - `possible_duplicate_of`: the name of another lodging in the same answer that it resembles. Names are never merged automatically; the
@@ -53,7 +56,10 @@ That last count is a text heuristic (a line that names the hotel or an alias tog
 "closed", "reopening", "renovation"; "renovated" does not count), so the matching lines are printed for a check by eye.
 
 ## Analyzer versions
-The first analyzer version stored `recommended` and a booking pointer that also counted cited sources and links
+Every stored analysis carries `analyzer_version` (current: `v3`, constant `ANALYZER_VERSION` in `schemas.ts`; raise it whenever the prompt or
+the meaning of a field changes). `destination-reanalyze` re-analyses every answer whose newest valid analysis is not the current version.
+v2 analyses (no version field, booking rule looser, quotes rejected above 25 words) are still read and shown as `v2`.
+The first analyzer version (v1) stored `recommended` and a booking pointer that also counted cited sources and links
 (`hotel_site` / `ota` / `other_link` / `none`). Those analyses stay in the database (append-only) and the report still reads them,
 but shows their booking column as `unspecified` and warns that they are not comparable. Analyses in the current format replace them
 in the report (the newest valid analysis of an answer is used).
