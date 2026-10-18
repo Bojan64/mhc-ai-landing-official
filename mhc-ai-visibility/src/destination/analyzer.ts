@@ -3,7 +3,7 @@ import { z } from "zod";
 import { apiKeyFor } from "../engines";
 import { classifyUrl, extractUrls } from "./aggregate";
 import type { SourceDomains } from "../config/schemas";
-import { finalizeAnalysis } from "./finalize";
+import { finalizeAnalysis, parseModelOutput } from "./finalize";
 import { ModelAnalysisSchema, type Analysis, type DestAnalyzer, type Destination } from "./schemas";
 import { callCost } from "./plan";
 
@@ -51,6 +51,8 @@ export interface AnalyzerOutput {
   input_tokens: number | null;
   output_tokens: number | null;
   cost_usd: number | null;
+  /** How many times the model was asked again for this analysis (0 or 1). Tokens and cost include the retry. */
+  retries?: number;
 }
 
 export type AnalyzeFn = (input: AnalyzerInput) => Promise<AnalyzerOutput>;
@@ -91,40 +93,56 @@ export function buildAnalyzerParams(cfg: DestAnalyzer, tool: Anthropic.Tool, inp
   };
 }
 
-/** Real analyzer: Claude with a forced tool call (falls back to tool_choice auto if the model rejects forcing). */
-export function createAnthropicAnalyzer(cfg: DestAnalyzer, domains: SourceDomains): AnalyzeFn {
-  const key = apiKeyFor("anthropic");
-  if (!key) throw new Error("MHC_ANTHROPIC_API_KEY is not set (needed for the analyzer)");
-  const client = new Anthropic({ apiKey: key, maxRetries: 0, timeout: 300_000 });
+/** Sends one request; returns the model's message. */
+export type SendFn = (params: ReturnType<typeof buildAnalyzerParams>) => Promise<Anthropic.Message>;
+
+/**
+ * The analyzer around a send function (real or fake). Reads the tool output leniently (see parseModelOutput); if a
+ * critical field is missing, or the model did not call the tool, it asks once more. A second failure makes the
+ * analysis invalid (error ends with "after 1 retry"). Tokens and cost of both requests are added up.
+ */
+export function makeAnalyzer(cfg: DestAnalyzer, domains: SourceDomains, send: SendFn): AnalyzeFn {
   const tool: Anthropic.Tool = {
     name: TOOL_NAME,
     description: "Record the accommodations named in the answer, in order of first mention.",
     input_schema: toolSchema(),
   };
-
   return async (input) => {
     const params = buildAnalyzerParams(cfg, tool, input, domains);
-    let res: Anthropic.Message;
+    let inTok = 0;
+    let outTok = 0;
+    let cost = 0;
+    let lastError = "";
+    let lastRaw: string | null = null;
+    for (let attempt = 0; attempt <= 1; attempt++) {
+      const res = await send(params);
+      inTok += res.usage.input_tokens;
+      outTok += res.usage.output_tokens;
+      cost += callCost(cfg.pricing, { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, searches: 0 }).totalUsd ?? 0;
+      const base = { input_tokens: inTok, output_tokens: outTok, cost_usd: cost, retries: attempt };
+      const block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === TOOL_NAME);
+      if (!block) { lastError = "analyzer did not call the tool"; lastRaw = JSON.stringify(res.content); continue; }
+      const parsed = parseModelOutput(block.input);
+      if ("error" in parsed) { lastError = parsed.error; lastRaw = JSON.stringify(block.input); continue; }
+      return { analysis: finalizeAnalysis(parsed, [input.destination.name, ...input.destination.location_match], attempt), raw_output: JSON.stringify(block.input), error: null, ...base };
+    }
+    return { analysis: null, raw_output: lastRaw, error: `${lastError} (after 1 retry)`, input_tokens: inTok, output_tokens: outTok, cost_usd: cost, retries: 1 };
+  };
+}
+
+/** Real analyzer: Claude with a forced tool call (falls back to tool_choice auto if the model rejects forcing). */
+export function createAnthropicAnalyzer(cfg: DestAnalyzer, domains: SourceDomains): AnalyzeFn {
+  const key = apiKeyFor("anthropic");
+  if (!key) throw new Error("MHC_ANTHROPIC_API_KEY is not set (needed for the analyzer)");
+  const client = new Anthropic({ apiKey: key, maxRetries: 0, timeout: 300_000 });
+  return makeAnalyzer(cfg, domains, async (params) => {
     try {
-      res = await client.messages.create({ ...params, tool_choice: { type: "tool", name: TOOL_NAME } });
+      return await client.messages.create({ ...params, tool_choice: { type: "tool", name: TOOL_NAME } });
     } catch (e) {
       const status = (e as { status?: number }).status;
       const msg = String((e as Error).message ?? "");
-      if (status === 400 && /tool_choice|forced|tool choice/i.test(msg)) {
-        res = await client.messages.create({ ...params, tool_choice: { type: "auto" } });
-      } else throw e;
+      if (status === 400 && /tool_choice|forced|tool choice/i.test(msg)) return client.messages.create({ ...params, tool_choice: { type: "auto" } });
+      throw e;
     }
-    const block = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === TOOL_NAME);
-    const cost = callCost(cfg.pricing, { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, searches: 0 }).totalUsd;
-    const base = { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens, cost_usd: cost };
-    if (!block) return { analysis: null, raw_output: JSON.stringify(res.content), error: "analyzer did not call the tool", ...base };
-    const parsed = ModelAnalysisSchema.safeParse(block.input);
-    if (!parsed.success)
-      return {
-        analysis: null, raw_output: JSON.stringify(block.input),
-        error: `schema: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`, ...base,
-      };
-    // over-long sentiment quotes are cut here, never rejected
-    return { analysis: finalizeAnalysis(parsed.data, [input.destination.name, ...input.destination.location_match]), raw_output: JSON.stringify(block.input), error: null, ...base };
-  };
+  });
 }

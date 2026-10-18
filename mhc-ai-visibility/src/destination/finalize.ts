@@ -1,5 +1,5 @@
 import { nameTokens } from "./aggregate";
-import { ANALYZER_VERSION, truncateQuote, type Analysis, type AnalyzedHotel, type ModelAnalysis } from "./schemas";
+import { ANALYZER_VERSION, BOOKING_TARGETS, LODGING_TYPES, SENTIMENTS, truncateQuote, type Analysis, type AnalyzedHotel, type ModelAnalysis } from "./schemas";
 
 // ---------------- booking safety net ----------------
 
@@ -62,16 +62,75 @@ export function markPossibleDuplicates<T extends { name: string; possible_duplic
   });
 }
 
+// ---------------- reading the model's tool output ----------------
+
+/** A hotel as read from the model's output; missing_fields lists non-critical fields the code had to fill in. */
+export type LenientHotel = ModelAnalysis["hotels"][number] & { missing_fields?: string[] };
+export interface LenientAnalysis { hotels: LenientHotel[]; no_hotels_reason: string | null }
+
+const isStr = (v: unknown): v is string => typeof v === "string";
+const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every(isStr);
+const isIn = <T extends string>(list: readonly T[], v: unknown): v is T => isStr(v) && (list as readonly string[]).includes(v);
+
+/**
+ * Reads the model's tool output. The tool schema the model sees is strict (every field required), but a missing
+ * field does not always ruin an analysis:
+ * - CRITICAL fields (hotel name, location_stated, sentiment, booking_target, and the hotels list): if missing or
+ *   wrong, the result is an error (the caller asks the model once more).
+ * - NON-CRITICAL fields (quote, sentiment_quote, booking_evidence, cited_sources, linked_urls, possible_duplicate_of,
+ *   lodging_type): if missing or wrong, an empty value is used and the field name goes to missing_fields.
+ * An explicit null (location_stated, booking_evidence, possible_duplicate_of) is a value, not a missing field.
+ */
+export function parseModelOutput(raw: unknown): LenientAnalysis | { error: string } {
+  const o = raw as Record<string, unknown> | null;
+  if (!o || typeof o !== "object" || !Array.isArray(o.hotels)) return { error: "critical field missing: hotels (list)" };
+  const problems: string[] = [];
+  const hotels: LenientHotel[] = [];
+  o.hotels.forEach((x, i) => {
+    const h = x as Record<string, unknown> | null;
+    if (!h || typeof h !== "object") { problems.push(`hotels.${i} is not an object`); return; }
+    if (!isStr(h.name) || !h.name.trim()) problems.push(`hotels.${i}.name`);
+    if (!("location_stated" in h) || !(h.location_stated === null || isStr(h.location_stated))) problems.push(`hotels.${i}.location_stated`);
+    if (!isIn(SENTIMENTS, h.sentiment)) problems.push(`hotels.${i}.sentiment`);
+    if (!isIn(BOOKING_TARGETS, h.booking_target)) problems.push(`hotels.${i}.booking_target`);
+    if (problems.length) return;
+    const missing: string[] = [];
+    const take = <T>(field: string, ok: (v: unknown) => boolean, fallback: T): T => {
+      if (ok(h[field])) return h[field] as T;
+      missing.push(field);
+      return fallback;
+    };
+    hotels.push({
+      name: h.name as string,
+      lodging_type: take("lodging_type", (v) => isIn(LODGING_TYPES, v), "hotel" as AnalyzedHotel["lodging_type"]),
+      location_stated: h.location_stated as string | null,
+      sentiment: h.sentiment as AnalyzedHotel["sentiment"],
+      sentiment_quote: take("sentiment_quote", isStr, ""),
+      booking_target: h.booking_target as AnalyzedHotel["booking_target"],
+      booking_evidence: take("booking_evidence", (v) => v === null || isStr(v), null as string | null),
+      cited_sources: take("cited_sources", isStrArr, [] as string[]),
+      linked_urls: take("linked_urls", isStrArr, [] as string[]),
+      possible_duplicate_of: take("possible_duplicate_of", (v) => v === null || isStr(v), null as string | null),
+      quote: take("quote", isStr, ""),
+      missing_fields: missing,
+    });
+  });
+  if (problems.length) return { error: `critical field missing or wrong: ${problems.slice(0, 4).join(", ")}` };
+  return { hotels, no_hotels_reason: o.no_hotels_reason === null || isStr(o.no_hotels_reason) ? (o.no_hotels_reason as string | null) : null };
+}
+
 // ---------------- model output → stored analysis ----------------
 
 /**
  * Model output → stored analysis. The code (not the model) cuts over-long sentiment quotes, demotes booking pointers
  * that are no explicit instruction, marks possible duplicates, and stamps the analyzer version. None of this rejects the analysis.
+ * `retries` = how many times the model was asked again for this analysis.
  */
-export function finalizeAnalysis(model: ModelAnalysis, destinationWords: string[] = []): Analysis {
+export function finalizeAnalysis(model: LenientAnalysis, destinationWords: string[] = [], retries = 0): Analysis {
   const hotels = model.hotels.map((h) => {
     const q = truncateQuote(h.sentiment_quote);
-    return { ...h, ...checkBooking(h), sentiment_quote: q.quote, quote_truncated: q.truncated };
+    const { missing_fields, ...rest } = h;
+    return { ...rest, ...checkBooking(h), sentiment_quote: q.quote, quote_truncated: q.truncated, missing_fields: missing_fields ?? [] };
   });
-  return { analyzer_version: ANALYZER_VERSION, no_hotels_reason: model.no_hotels_reason, hotels: markPossibleDuplicates(hotels, destinationWords) };
+  return { analyzer_version: ANALYZER_VERSION, analyzer_retries: retries, no_hotels_reason: model.no_hotels_reason, hotels: markPossibleDuplicates(hotels, destinationWords) };
 }

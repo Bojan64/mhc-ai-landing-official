@@ -115,6 +115,8 @@ const codeFields = {
   booking_demoted: z.boolean(),
   booking_demoted_from: z.enum(BOOKING_TARGETS).nullable(),
   booking_demoted_reason: z.string().nullable(),
+  // Non-critical fields the model left out or filled wrongly; the code used an empty value (see parseModelOutput).
+  missing_fields: z.array(z.string()),
 };
 export const AnalyzedHotelSchema = z.strictObject({ ...hotelFields, ...codeFields });
 export type AnalyzedHotel = z.infer<typeof AnalyzedHotelSchema>;
@@ -122,6 +124,8 @@ export type AnalyzedHotel = z.infer<typeof AnalyzedHotelSchema>;
 /** What is stored and used everywhere after the analyzer. */
 export const AnalysisSchema = z.strictObject({
   analyzer_version: z.enum(ANALYZER_VERSIONS),
+  // 1 if the first answer of the model lacked a critical field and the analysis was asked once more, else 0.
+  analyzer_retries: z.number().int().min(0),
   hotels: z.array(AnalyzedHotelSchema),
   no_hotels_reason: z.string().nullable(),
 });
@@ -132,7 +136,7 @@ export type Analysis = z.infer<typeof AnalysisSchema>;
 // v3: like the current format but without the booking-demotion fields (prompt-only booking rule).
 const V3HotelSchema = z.strictObject({ ...hotelFields, quote_truncated: z.boolean() });
 const V3AnalysisSchema = z.strictObject({ analyzer_version: z.literal("v3"), hotels: z.array(V3HotelSchema), no_hotels_reason: z.string().nullable() });
-const noDemotion = { booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null } as const;
+const noDemotion = { booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null, missing_fields: [] as string[] };
 
 // v2: new fields, but no analyzer_version / quote_truncated, and a looser booking rule.
 const V2HotelSchema = z.strictObject(hotelFields);
@@ -162,11 +166,11 @@ export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy:
   if (cur.success) return { analysis: cur.data, legacy: cur.data.analyzer_version !== ANALYZER_VERSION };
   const v3 = V3AnalysisSchema.safeParse(raw);
   if (v3.success) {
-    return { legacy: true, analysis: { analyzer_version: "v3", no_hotels_reason: v3.data.no_hotels_reason, hotels: v3.data.hotels.map((h) => ({ ...h, ...noDemotion })) } };
+    return { legacy: true, analysis: { analyzer_version: "v3", analyzer_retries: 0, no_hotels_reason: v3.data.no_hotels_reason, hotels: v3.data.hotels.map((h) => ({ ...h, ...noDemotion })) } };
   }
   const v2 = V2AnalysisSchema.safeParse(raw);
   if (v2.success) {
-    return { legacy: true, analysis: { analyzer_version: "v2", no_hotels_reason: v2.data.no_hotels_reason, hotels: v2.data.hotels.map((h) => ({ ...h, quote_truncated: false, ...noDemotion })) } };
+    return { legacy: true, analysis: { analyzer_version: "v2", analyzer_retries: 0, no_hotels_reason: v2.data.no_hotels_reason, hotels: v2.data.hotels.map((h) => ({ ...h, quote_truncated: false, ...noDemotion })) } };
   }
   const v1 = V1AnalysisSchema.safeParse(raw);
   if (!v1.success) return null;
@@ -174,6 +178,7 @@ export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy:
     legacy: true,
     analysis: {
       analyzer_version: "v1",
+      analyzer_retries: 0,
       no_hotels_reason: v1.data.no_hotels_reason,
       hotels: v1.data.hotels.map((h) => ({
         name: h.name, lodging_type: h.lodging_type, location_stated: h.location_stated,

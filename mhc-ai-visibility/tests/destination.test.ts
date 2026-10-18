@@ -6,13 +6,13 @@ import { z } from "zod";
 import type { AdapterFactory } from "../src/engines";
 import type { EngineResult } from "../src/engines/types";
 import { aggregate, classifyUrl, extractUrls, nameKey, type AnswerForAggregation } from "../src/destination/aggregate";
-import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerParams, buildAnalyzerUserMessage, type AnalyzeFn } from "../src/destination/analyzer";
+import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerParams, buildAnalyzerUserMessage, makeAnalyzer, type AnalyzeFn } from "../src/destination/analyzer";
 import { loadDestinationConfig, type DestinationConfig } from "../src/destination/config";
 import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, selectDestAnswers, selectStaleAnalyses } from "../src/destination/db";
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
 import { buildReport, renderHeader, renderHotelTable, renderMarkdown } from "../src/destination/report";
 import { executeDestinationRun, DestRunRefused, executeReanalysis } from "../src/destination/run";
-import { checkBooking, distinctiveTokens, finalizeAnalysis, markPossibleDuplicates } from "../src/destination/finalize";
+import { checkBooking, distinctiveTokens, finalizeAnalysis, markPossibleDuplicates, parseModelOutput } from "../src/destination/finalize";
 import { ANALYZER_VERSION, AnalysisSchema, ModelAnalysisSchema, parseStoredAnalysis, truncateQuote, type Analysis, type Destination } from "../src/destination/schemas";
 import { CONFIG_DIR } from "./helpers";
 
@@ -48,11 +48,12 @@ function pricedConfig(): DestinationConfig {
 
 const hotelsIn = (names: string[], overrides: Partial<Analysis["hotels"][number]> = {}): Analysis => ({
   analyzer_version: ANALYZER_VERSION,
+  analyzer_retries: 0,
   hotels: names.map((name) => ({
     name, lodging_type: "hotel" as const, location_stated: "Bled", sentiment: "recommended" as const, sentiment_quote: `try ${name}`,
     booking_target: "unspecified" as const, booking_evidence: null, cited_sources: [] as string[], linked_urls: [] as string[],
     possible_duplicate_of: null, quote: name, quote_truncated: false,
-    booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null, ...overrides,
+    booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null, missing_fields: [] as string[], ...overrides,
   })),
   no_hotels_reason: null,
 });
@@ -270,7 +271,7 @@ describe("analyzer prompt and schema", () => {
     expect(cut.truncated).toBe(true);
     expect(cut.quote).toBe(`${words(25)}…`);
     const base = (name: string, q: string) => {
-      const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h } = hotelsIn([name]).hotels[0];
+      const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h } = hotelsIn([name]).hotels[0];
       return { ...h, sentiment_quote: q };
     };
     const model = ModelAnalysisSchema.parse({
@@ -290,7 +291,7 @@ describe("analyzer prompt and schema", () => {
   });
 
   const hotel = (name: string, booking_target: "direct" | "ota" | "portal" | "unspecified", booking_evidence: string | null, extra: object = {}) => {
-    const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h } = hotelsIn([name]).hotels[0];
+    const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h } = hotelsIn([name]).hotels[0];
     return { ...h, booking_target, booking_evidence, ...extra };
   };
 
@@ -383,7 +384,8 @@ describe("analyzer prompt and schema", () => {
   });
 
   it("reads third-version analyses (no demotion fields) as version v3, not current", () => {
-    const v3 = { ...hotelsIn(["A"]), analyzer_version: "v3", hotels: hotelsIn(["A"]).hotels.map(({ booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) };
+    const { analyzer_retries: _ar, ...cur } = hotelsIn(["A"]);
+    const v3 = { ...cur, analyzer_version: "v3", hotels: cur.hotels.map(({ booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h }) => h) };
     const r = parseStoredAnalysis(JSON.stringify(v3))!;
     expect(r.analysis.analyzer_version).toBe("v3");
     expect(r.legacy).toBe(true);
@@ -391,8 +393,8 @@ describe("analyzer prompt and schema", () => {
   });
 
   it("reads second-version analyses (no version field) as version v2, not current", () => {
-    const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
-    const v2 = { ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) };
+    const { analyzer_version: _v, analyzer_retries: _ar, ...rest } = hotelsIn(["A"]);
+    const v2 = { ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h }) => h) };
     const r = parseStoredAnalysis(JSON.stringify(v2))!;
     expect(r.analysis.analyzer_version).toBe("v2");
     expect(r.legacy).toBe(true);
@@ -439,6 +441,93 @@ describe("destination analyzer is separate from the hotel-mode analyzer", () => 
     j.destination_analyzer.temperature = 3;
     writeFileSync(path, JSON.stringify(j));
     expect(loadDestinationConfig(dir).errors.join()).toContain("destination_analyzer");
+  });
+});
+
+describe("tolerant reading of the analyzer's tool output", () => {
+  const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...full } = hotelsIn(["Hotel A"]).hotels[0];
+  const without = (...keys: string[]) => Object.fromEntries(Object.entries(full).filter(([k]) => !keys.includes(k)));
+  const out = (...hotels: object[]) => ({ hotels, no_hotels_reason: null });
+
+  it("fills non-critical fields that are missing or wrong with empty values and lists them in missing_fields", () => {
+    const r = parseModelOutput(out(without("quote", "sentiment_quote", "booking_evidence", "cited_sources", "linked_urls", { ...full, lodging_type: "castle" }.lodging_type ? "possible_duplicate_of" : "")));
+    if ("error" in r) throw new Error(r.error);
+    const h = r.hotels[0];
+    expect(h.missing_fields).toEqual(["sentiment_quote", "booking_evidence", "cited_sources", "linked_urls", "possible_duplicate_of", "quote"]);
+    expect([h.quote, h.sentiment_quote, h.booking_evidence, h.cited_sources, h.linked_urls, h.possible_duplicate_of]).toEqual(["", "", null, [], [], null]);
+    const bad = parseModelOutput(out({ ...full, lodging_type: "castle", cited_sources: "Booking.com" }));
+    if ("error" in bad) throw new Error(bad.error);
+    expect(bad.hotels[0].missing_fields).toEqual(["lodging_type", "cited_sources"]);
+    expect(bad.hotels[0].lodging_type).toBe("hotel");
+  });
+
+  it("an explicit null is a value, not a missing field", () => {
+    const r = parseModelOutput(out({ ...full, booking_evidence: null, possible_duplicate_of: null, location_stated: null }));
+    if ("error" in r) throw new Error(r.error);
+    expect(r.hotels[0].missing_fields).toEqual([]);
+  });
+
+  it("a missing or wrong critical field (name, location_stated, sentiment, booking_target, hotels) is an error", () => {
+    for (const bad of [without("name"), without("location_stated"), without("sentiment"), without("booking_target"), { ...full, sentiment: "great" }, { ...full, booking_target: "hotel_site" }, { ...full, name: " " }]) {
+      const r = parseModelOutput(out(bad));
+      expect("error" in r && r.error).toMatch(/critical field/);
+    }
+    expect("error" in parseModelOutput({ no_hotels_reason: null })).toBe(true);
+    expect("error" in parseModelOutput(null)).toBe(true);
+    expect(parseModelOutput({ hotels: [], no_hotels_reason: "refusal" })).toEqual({ hotels: [], no_hotels_reason: "refusal" });
+  });
+
+  it("the tool schema the model sees stays strict: every field is required", () => {
+    const sch = (z.toJSONSchema(ModelAnalysisSchema) as any).properties.hotels.items;
+    expect(sch.required).toEqual(expect.arrayContaining(["name", "location_stated", "sentiment", "booking_target", "quote", "sentiment_quote", "booking_evidence", "cited_sources", "linked_urls"]));
+  });
+
+  // a fake model: each call returns the next scripted tool input (or no tool call when null)
+  const scripted = (inputs: (object | null)[], usage = { input_tokens: 3000, output_tokens: 1200 }) => {
+    let n = 0;
+    return {
+      calls: () => n,
+      send: async () => {
+        const i = inputs[Math.min(n, inputs.length - 1)];
+        n++;
+        return { content: i === null ? [{ type: "text", text: "no tool" }] : [{ type: "tool_use", id: "x", name: "record_destination_analysis", input: i }], usage } as any;
+      },
+    };
+  };
+  const cfg = () => cfgWith();
+  const an = (send: any) => makeAnalyzer(cfg().destination.destination_analyzer, cfg().sourceDomains, send);
+  const input = { question: "Q?", answer: "A", destination: BLED };
+
+  it("a missing non-critical field does not cost a retry and the analysis stays valid", async () => {
+    const m = scripted([out(without("quote"))]);
+    const r = await an(m.send)(input);
+    expect(m.calls()).toBe(1);
+    expect(r.retries).toBe(0);
+    expect(r.analysis!.hotels[0].missing_fields).toEqual(["quote"]);
+    expect(AnalysisSchema.safeParse(r.analysis).success).toBe(true);
+  });
+
+  it("a missing critical field gets exactly one more request; tokens and cost are added up", async () => {
+    const m = scripted([out(without("sentiment")), out(full)]);
+    const r = await an(m.send)(input);
+    expect(m.calls()).toBe(2);
+    expect(r.retries).toBe(1);
+    expect(r.analysis!.analyzer_retries).toBe(1);
+    expect(r.input_tokens).toBe(6000);
+    expect(r.output_tokens).toBe(2400);
+    expect(r.cost_usd).toBeCloseTo(2 * (3000 * 2 + 1200 * 10) / 1e6);
+  });
+
+  it("if the retry fails too, the analysis is invalid and says so; a missing tool call is retried as well", async () => {
+    const m = scripted([out(without("booking_target")), out(without("name"))]);
+    const r = await an(m.send)(input);
+    expect(m.calls()).toBe(2);
+    expect(r.analysis).toBeNull();
+    expect(r.error).toMatch(/critical field.*\(after 1 retry\)$/);
+    const none = scripted([null]);
+    const r2 = await an(none.send)(input);
+    expect(none.calls()).toBe(2);
+    expect(r2.error).toBe("analyzer did not call the tool (after 1 retry)");
   });
 });
 
@@ -576,6 +665,25 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     expect(rep.olderAnalyses).toBe(0);
     expect(rep.demoted).toEqual([]);
     expect(md).toContain("BOOKING POINTERS DEMOTED BY THE CODE");
+    expect(rep.analysisStats).toMatchObject({ byVersion: { v4: 24 }, withMissingFields: 0, retriedValid: 0, retriedInvalid: 0, invalid: 0 });
+    expect(md).toContain("ANALYSIS QUALITY");
+  });
+
+  it("counts missing fields by field, retries and invalid analyses in the report", async () => {
+    const c = pricedConfig();
+    const { db } = setupRun(c, 1);
+    const withGaps: AnalyzeFn = async () => ({
+      analysis: { ...hotelsIn(["Hotel A", "Hotel B"]), analyzer_retries: 1, hotels: hotelsIn(["Hotel A", "Hotel B"]).hotels.map((h, i) => (i === 0 ? { ...h, missing_fields: ["quote", "linked_urls"] } : h)) },
+      raw_output: "{}", error: null, input_tokens: 1, output_tokens: 1, cost_usd: 0, retries: 1,
+    });
+    await executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: fake().factory, analyzerFactory: () => withGaps, ...quiet });
+    const firstJob = (db.prepare("SELECT job_id FROM dest_jobs ORDER BY job_id LIMIT 1").get() as { job_id: number }).job_id;
+    saveDestAnalysis(db, firstJob, { analyzer_model: "m", analysis_json: null, raw_output: "{}", schema_valid: false, error: "critical field missing (after 1 retry)", input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
+    const st = buildReport(db, c, "r").analysisStats;
+    expect(st.withMissingFields).toBe(24);
+    expect(st.missingByField).toEqual({ quote: 24, linked_urls: 24 });
+    expect(st).toMatchObject({ retriedValid: 24, retriedInvalid: 1, invalid: 1 });
+    expect(renderMarkdown(buildReport(db, c, "r"))).toContain("quote ×24, linked_urls ×24");
   });
 
   it("lists every demoted booking pointer separately in the report", async () => {
@@ -583,7 +691,7 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     const { db } = setupRun(c, 1);
     const demotingAnalyzer: AnalyzeFn = async () => ({
       analysis: finalizeAnalysis(ModelAnalysisSchema.parse({
-        hotels: [(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => ({ ...h, booking_target: "ota", booking_evidence: "On Booking.com it scores 8.8" }))(hotelsIn(["Hotel Rating"]).hotels[0])],
+        hotels: [(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h }) => ({ ...h, booking_target: "ota", booking_evidence: "On Booking.com it scores 8.8" }))(hotelsIn(["Hotel Rating"]).hotels[0])],
         no_hotels_reason: null,
       })),
       raw_output: "{}", error: null, input_tokens: 1, output_tokens: 1, cost_usd: 0,
@@ -652,8 +760,8 @@ describe("re-analysis of stored answers (no engine is asked again)", () => {
     const { c, db } = await runWithOldAnalyses();
     expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
     const first = selectDestAnswers(db, "r")[0];
-    const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
-    const v2 = JSON.stringify({ ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) });
+    const { analyzer_version: _v, analyzer_retries: _ar, ...rest } = hotelsIn(["A"]);
+    const v2 = JSON.stringify({ ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, missing_fields: _m, ...h }) => h) });
     saveDestAnalysis(db, first.job.job_id, { analyzer_model: "m", analysis_json: v2, raw_output: v2, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
     expect(selectStaleAnalyses(db, "r")).toHaveLength(24); // v2 is still not current
     const cur = JSON.stringify(hotelsIn(["A"]));
@@ -670,16 +778,33 @@ describe("re-analysis of stored answers (no engine is asked again)", () => {
     expect(an.calls()).toBe(0);
   });
 
-  it("stops at once when the first analysis is not valid", async () => {
+  it("skips a single invalid analysis and carries on; stops only after 3 invalid in a row", async () => {
     const { c, db } = await runWithOldAnalyses();
-    let n = 0;
-    const bad: AnalyzeFn = async () => (n++, { analysis: null, raw_output: "{}", error: "schema: hotels.0.sentiment_quote sentiment_quote has more than 25 words", input_tokens: 10, output_tokens: 10, cost_usd: 0.001 });
+    c.destination.destination_analyzer.max_concurrency = 1;
+    const mk = (invalidAt: (n: number) => boolean) => {
+      let n = 0;
+      const fn: AnalyzeFn = async () => {
+        n++;
+        return invalidAt(n)
+          ? { analysis: null, raw_output: "{}", error: "critical field missing or wrong: hotels.0.sentiment (after 1 retry)", input_tokens: 10, output_tokens: 10, cost_usd: 0.001, retries: 1 }
+          : { analysis: hotelsIn(["Hotel New"]), raw_output: "{}", error: null, input_tokens: 10, output_tokens: 10, cost_usd: 0.001 };
+      };
+      return { fn, calls: () => n };
+    };
+    const one = mk((n) => n === 2); // one invalid, then valid again
+    const s1 = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => one.fn, ...quiet });
+    expect(one.calls()).toBe(24);
+    expect(s1).toMatchObject({ analyzed: 23, analysisFailed: 1, retried: 1, stopReason: "completed" });
+
+    const { c: c2, db: db2 } = await runWithOldAnalyses();
+    c2.destination.destination_analyzer.max_concurrency = 1;
+    const three = mk((n) => n >= 3 && n <= 5); // 3 in a row from the third call on
     const lines: string[] = [];
-    const s = await executeReanalysis(db, c, "r", BLED, { budgetEur: 20, analyzerFactory: () => bad, log: (l) => lines.push(l) });
-    expect(n).toBe(1);
-    expect(s.stopReason).toBe("first_invalid");
-    expect(lines.join("\n")).toContain("more than 25 words");
-    expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
+    const s2 = await executeReanalysis(db2, c2, "r", BLED, { budgetEur: 20, analyzerFactory: () => three.fn, log: (l) => lines.push(l) });
+    expect(three.calls()).toBe(5);
+    expect(s2.stopReason).toBe("invalid_streak");
+    expect(lines.join("\n")).toContain("3 invalid analyses in a row");
+    expect(selectStaleAnalyses(db2, "r")).toHaveLength(24 - 2);
   });
 });
 

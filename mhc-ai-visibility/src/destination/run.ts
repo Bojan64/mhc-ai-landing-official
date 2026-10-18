@@ -262,13 +262,15 @@ export interface ReanalyzeSummary {
   estimatedUsd: number;
   spentUsd: number;
   spentTotalUsd: number;
-  stopReason: "completed" | "budget" | "interrupted" | "first_invalid";
+  stopReason: "completed" | "budget" | "interrupted" | "invalid_streak";
+  /** Analyses that needed one more request to the model (a critical field was missing the first time). */
+  retried: number;
 }
 
 /**
  * Analyses again the stored answers whose newest valid analysis is missing or in the first analyzer format.
  * New analyses are added next to the old ones (append-only); answers are not touched. Same budget gate as a run.
- * The first analysis runs alone: if it is not valid, nothing else is started.
+ * Stops only after 3 invalid analyses in a row (a valid one resets the count); a single invalid analysis is skipped.
  */
 export async function executeReanalysis(
   db: DestDB, cfg: DestinationConfig, runId: string, dest: Destination, o: ReanalyzeOptions,
@@ -293,7 +295,7 @@ export async function executeReanalysis(
   const check = checkDestinationBudget(est, o.budgetEur, spentBeforeUsd * rate);
   if (!check.ok) throw new DestRunRefused(`Re-analysis refused:\n  - ${check.reasons.join("\n  - ")}`);
   const budgetEur = o.budgetEur as number;
-  const summary: ReanalyzeSummary = { candidates: queue.length, analyzed: 0, analysisFailed: 0, estimatedUsd, spentUsd: 0, spentTotalUsd: spentBeforeUsd, stopReason: "completed" };
+  const summary: ReanalyzeSummary = { candidates: queue.length, analyzed: 0, analysisFailed: 0, estimatedUsd, spentUsd: 0, spentTotalUsd: spentBeforeUsd, stopReason: "completed", retried: 0 };
   if (!queue.length) { log("Nothing to re-analyse: every answer already has an analysis in the current format."); return summary; }
 
   const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.destination.destination_analyzer, c.sourceDomains)))(cfg);
@@ -320,7 +322,13 @@ export async function executeReanalysis(
       });
       summary.spentUsd += out.cost_usd ?? 0;
       observedMax = Math.max(observedMax, out.cost_usd ?? 0);
-      if (out.analysis) { summary.analyzed++; log(`${tag} ok (${out.analysis.hotels.length} hotels) $${(out.cost_usd ?? 0).toFixed(4)}`); return true; }
+      if (out.retries) summary.retried++;
+      if (out.analysis) {
+        summary.analyzed++;
+        const gaps = out.analysis.hotels.flatMap((h) => h.missing_fields.map((f) => `${h.name}.${f}`));
+        log(`${tag} ok (${out.analysis.hotels.length} hotels)${out.retries ? " after 1 retry" : ""}${gaps.length ? ` missing: ${gaps.join(", ")}` : ""} $${(out.cost_usd ?? 0).toFixed(4)}`);
+        return true;
+      }
       summary.analysisFailed++;
       log(`${tag} INVALID: ${out.error}`);
       return false;
@@ -340,19 +348,19 @@ export async function executeReanalysis(
     return summary.stopReason !== "completed";
   };
 
-  // the first analysis alone: if it is not valid, stop at once
-  if (!stopNow(perAnalysis)) {
-    const first = queue.shift()!;
-    if (!(await one(first))) summary.stopReason = "first_invalid";
-  }
+  let invalidInARow = 0;
   const workers = Array.from({ length: cfg.destination.destination_analyzer.max_concurrency }, async () => {
-    while (queue.length && !stopNow(Math.max(perAnalysis, observedMax))) await one(queue.shift()!);
+    while (queue.length && !stopNow(Math.max(perAnalysis, observedMax))) {
+      const ok = await one(queue.shift()!);
+      invalidInARow = ok ? 0 : invalidInARow + 1;
+      if (invalidInARow >= 3 && summary.stopReason === "completed") summary.stopReason = "invalid_streak";
+    }
   });
   await Promise.all(workers);
 
   summary.spentTotalUsd = spentBeforeUsd + summary.spentUsd;
   if (summary.stopReason === "budget") log(`■ Stopped: the next call would exceed the hard budget of €${budgetEur.toFixed(2)}.`);
-  if (summary.stopReason === "first_invalid") log("■ Stopped: the first analysis was not valid, so no other answer was analysed.");
+  if (summary.stopReason === "invalid_streak") log("■ Stopped: 3 invalid analyses in a row.");
   if (summary.stopReason === "interrupted") log("■ Stopped on request.");
   return summary;
 }

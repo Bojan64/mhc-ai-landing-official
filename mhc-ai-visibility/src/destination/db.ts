@@ -231,6 +231,15 @@ export function selectStaleAnalyses(db: DestDB, runId: string, engines?: string[
   });
 }
 
+/** Jobs whose NEWEST analysis row is invalid (the newest attempt failed), with its error. */
+export function selectNewestInvalid(db: DestDB, runId: string): { job_id: number; error: string | null }[] {
+  return db.prepare(
+    `SELECT a.job_id, a.error FROM dest_analyses a JOIN dest_jobs j USING (job_id)
+      WHERE j.run_id = ? AND a.schema_valid = 0
+        AND a.analysis_id = (SELECT MAX(analysis_id) FROM dest_analyses WHERE job_id = a.job_id)`,
+  ).all(runId) as { job_id: number; error: string | null }[];
+}
+
 export interface DestAnalysisInput {
   analyzer_model: string; analysis_json: string | null; raw_output: string | null; schema_valid: boolean;
   error: string | null; input_tokens: number | null; output_tokens: number | null; cost_estimate: number | null;

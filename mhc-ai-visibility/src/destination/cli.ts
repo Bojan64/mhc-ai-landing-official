@@ -198,7 +198,7 @@ async function reanalyze(name: string, engineList: string[] | undefined): Promis
     if (!dest) throw new DestRunRefused(`Destination "${stored.destination_id}" is no longer in destination.json.`);
     const s = await executeReanalysis(db, cfg, name, dest, { engines: engineList, budgetEur: env.budgetEur, shouldStop: () => interrupted });
     const rate = cfg.engines.usd_to_eur;
-    console.log(`\nAnalyses: ${s.analyzed} valid, ${s.analysisFailed} failed or invalid, of ${s.candidates} answer(s).`);
+    console.log(`\nAnalyses: ${s.analyzed} valid, ${s.analysisFailed} failed or invalid, of ${s.candidates} answer(s); ${s.retried} needed a retry.`);
     console.log(`Cost this session: ${usd(s.spentUsd)} ≈ ${eur(s.spentUsd * rate)} (estimate ${usd(s.estimatedUsd)}); total for this run ${eur(s.spentTotalUsd * rate)} of ${eur(env.budgetEur)} budget.`);
     console.log(`Next: destination-report --run-name "${name}" --out data/${name}-v2.md`);
     return s.analysisFailed ? 2 : 0;

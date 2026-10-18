@@ -60,6 +60,17 @@ Destination mode reads ONLY `destination_analyzer` in `config/destination.json` 
 `temperature: null` means the parameter is not sent at all: Sonnet 5.5 rejects it ("`temperature` is deprecated for this model").
 The `analyzer` block in `engines.json` belongs to the hotel mode (Haiku 4.5, temperature 0) and is not used by destination mode.
 
+## Missing fields in the analyzer's output
+The tool schema the model sees is strict (every field required). When the model still leaves something out, the code reads the output tolerantly:
+- **Non-critical fields** (`quote`, `sentiment_quote`, `booking_evidence`, `cited_sources`, `linked_urls`, `possible_duplicate_of`, `lodging_type`):
+  missing or wrong → an empty value is used and the field name is written to the hotel's `missing_fields`. The analysis stays valid.
+  An explicit `null` (for `booking_evidence`, `possible_duplicate_of`) is a value, not a gap.
+- **Critical fields** (hotel `name`, `location_stated`, `sentiment`, `booking_target`, and the `hotels` list; also a reply without any tool call):
+  missing or wrong → the model is asked once more for that analysis (`analyzer_retries: 1`; tokens and cost of both requests are added).
+  If the second reply is also unusable, the analysis is invalid (error ends with "after 1 retry") and the work goes on with the next answer.
+- `destination-reanalyze` stops only after **3 invalid analyses in a row**.
+- The report ("Analysis quality") shows analyses per version, answers with missing fields per field, retries (ended valid / invalid) and invalid analyses.
+
 ## Analyzer versions
 Every stored analysis carries `analyzer_version` (current: `v4`, constant `ANALYZER_VERSION` in `schemas.ts`; raise it whenever the prompt or
 the meaning of a field changes). `destination-reanalyze` re-analyses every answer whose newest valid analysis is not the current version.

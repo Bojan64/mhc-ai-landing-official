@@ -3,7 +3,7 @@ import { CITATION_NORMALIZERS } from "../engines";
 import type { SourceRef } from "../engines/types";
 import { table } from "../util/table";
 import { aggregate, type Aggregation, type AnswerForAggregation, type HotelRow } from "./aggregate";
-import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs } from "./db";
+import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs, selectNewestInvalid } from "./db";
 import { auditClosedHotels, type ClosedAudit } from "./facts";
 import { estimateDestinationCost } from "./plan";
 import { parseStoredAnalysis, type Analysis, type Destination } from "./schemas";
@@ -19,6 +19,8 @@ export interface ReportData {
   /** Answers whose newest analysis is from an older analyzer version (booking and sentiment fields are not comparable). */
   olderAnalyses: number;
   agg: Aggregation;
+  /** How well the analyzer filled in its output (only analyses of the current version are counted). */
+  analysisStats: AnalysisStats;
   /** Booking pointers the code demoted to "unspecified" because the evidence was no explicit pointer. */
   demoted: { engine_id: string; question_id: string; hotel: string; from: string; evidence: string | null; reason: string }[];
   /** Recommendations of hotels that hand-checked facts say are closed. */
@@ -26,6 +28,19 @@ export interface ReportData {
   /** planned vs answered, per engine */
   engineStatus: { engine_id: string; model: string; planned: number; done: number; failed: number; pending: number; lastError: string | null }[];
   cost: CostComparison;
+}
+
+export interface AnalysisStats {
+  /** valid analyses per analyzer version */
+  byVersion: Record<string, number>;
+  /** answers with at least one non-critical field filled in by the code, and how often per field */
+  withMissingFields: number;
+  missingByField: Record<string, number>;
+  /** analyses that needed one more request to the model, and how many ended valid / invalid */
+  retriedValid: number;
+  retriedInvalid: number;
+  /** answers whose newest analysis attempt is invalid */
+  invalid: number;
 }
 
 export interface CostComparison {
@@ -43,6 +58,21 @@ function sourcesOf(cfg: DestinationConfig, a: DestAnswerRow): SourceRef[] {
   } catch {
     return [];
   }
+}
+
+function statsOf(db: DestDB, runId: string, analyses: Map<number, Analysis>): AnalysisStats {
+  const st: AnalysisStats = { byVersion: {}, withMissingFields: 0, missingByField: {}, retriedValid: 0, retriedInvalid: 0, invalid: 0 };
+  for (const a of analyses.values()) {
+    st.byVersion[a.analyzer_version] = (st.byVersion[a.analyzer_version] ?? 0) + 1;
+    if (a.analyzer_retries > 0) st.retriedValid++;
+    const fields = a.hotels.flatMap((h) => h.missing_fields);
+    if (fields.length) st.withMissingFields++;
+    for (const f of fields) st.missingByField[f] = (st.missingByField[f] ?? 0) + 1;
+  }
+  const bad = selectNewestInvalid(db, runId);
+  st.invalid = bad.length;
+  st.retriedInvalid = bad.filter((b) => (b.error ?? "").includes("after 1 retry")).length;
+  return st;
 }
 
 function demotedBookings(answers: DestAnswerRow[], analyses: Map<number, Analysis>): ReportData["demoted"] {
@@ -105,7 +135,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), demoted: demotedBookings(answers, analyses), engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), demoted: demotedBookings(answers, analyses), analysisStats: statsOf(db, runId, analyses), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -189,6 +219,18 @@ export function renderClosedHotels(r: ReportData): string {
   return out.join("\n");
 }
 
+export function renderAnalysisStats(r: ReportData): string {
+  const t = r.analysisStats;
+  const fields = Object.entries(t.missingByField).sort((a, b) => b[1] - a[1]).map(([f, n]) => `${f} ×${n}`).join(", ");
+  return [
+    "ANALYSIS QUALITY",
+    `valid analyses by analyzer version: ${Object.entries(t.byVersion).map(([v, n]) => `${v}: ${n}`).join(", ") || "none"}`,
+    `answers with missing non-critical fields (filled in empty by the code): ${t.withMissingFields}${fields ? ` — ${fields}` : ""}`,
+    `analyses that needed a retry (a critical field was missing the first time): ${t.retriedValid + t.retriedInvalid} (${t.retriedValid} ended valid, ${t.retriedInvalid} invalid)`,
+    `answers whose newest analysis attempt is invalid: ${t.invalid}`,
+  ].join("\n");
+}
+
 export function renderDemoted(r: ReportData): string {
   const head = "BOOKING POINTERS DEMOTED BY THE CODE (the model named a booking place, but its evidence is no explicit pointer to book that hotel, so booking = unspecified)";
   if (!r.demoted.length) return `${head}\n(none)`;
@@ -240,7 +282,7 @@ export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswer
 
 /** Terminal report: header, table, checks, cost, a few examples of answer vs extraction. */
 export function renderTerminal(r: ReportData, o: { examples: number; maxChars: number }): string {
-  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", renderDemoted(r), "", "COST (estimate vs actual)", renderCost(r)];
+  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", renderDemoted(r), "", renderAnalysisStats(r), "", "COST (estimate vs actual)", renderCost(r)];
   if (o.examples > 0) {
     // spread the examples over different engines
     const pick: DestAnswerRow[] = [];
@@ -263,6 +305,7 @@ export function renderMarkdown(r: ReportData): string {
     "", "## Manual check", fence(renderChecks(r)),
     "", "## Priporočila nedosegljivih hotelov (recommendations of unavailable hotels)", fence(renderClosedHotels(r)),
     "", "## Booking pointers demoted by the code", fence(renderDemoted(r)),
+    "", "## Analysis quality", fence(renderAnalysisStats(r)),
     "", "## Cost", fence(renderCost(r)),
     "", "## Verbatim answers", fence(renderAnswers(r, 0)),
     "",
