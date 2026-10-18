@@ -27,6 +27,13 @@ function cfgWith(edit?: (dir: string) => void): DestinationConfig {
   return config;
 }
 
+/** Shipped config with the OpenAI token prices blanked, to test the "price missing" refusal. */
+function cfgWithoutOpenAiPrice(): DestinationConfig {
+  const c = cfgWith();
+  c.engines.engines.find((e) => e.engine_id === "openai")!.pricing.input_per_million = null;
+  return c;
+}
+
 /** Config with all prices filled in and no rate limiting, like a user who entered the OpenAI price. */
 function pricedConfig(): DestinationConfig {
   const c = cfgWith();
@@ -105,7 +112,7 @@ describe("planning and cost", () => {
   });
 
   it("is incomplete while the OpenAI price is missing, and the run is refused", () => {
-    const c = cfgWith();
+    const c = cfgWithoutOpenAiPrice();
     const est = estimateDestinationCost(c, buildDestinationJobs(c, BLED, 1));
     expect(est.incomplete).toBe(true);
     const check = checkDestinationBudget(est, 20);
@@ -121,7 +128,8 @@ describe("planning and cost", () => {
     expect(est.unverifiedUsd).toBeCloseTo(sum("unverified"));
     expect(est.verifiedUsd + est.unverifiedUsd).toBeCloseTo(est.knownUsd);
     expect(est.lines.find((l) => l.key === "anthropic")!.priceStatus).toBe("verified");
-    expect(est.lines.find((l) => l.key === "openai")!.priceStatus).toBe("unverified");
+    expect(est.lines.find((l) => l.key === "openai")!.priceStatus).toBe("verified");
+    expect(est.lines.find((l) => l.key === "gemini")!.priceStatus).toBe("unverified");
   });
 
   it("requires a budget and refuses an estimate above it", () => {
@@ -243,7 +251,7 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
   const httpError = (status: number) => Object.assign(new Error(`HTTP ${status} quota`), { status });
 
   it("refuses to start while a price is missing, before any call", async () => {
-    const c = cfgWith();
+    const c = cfgWithoutOpenAiPrice();
     const { db } = setupRun(c);
     const f = fake();
     await expect(executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: f.factory, analyzerFactory: () => fakeAnalyzer().fn, ...quiet })).rejects.toThrow(DestRunRefused);

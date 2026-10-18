@@ -11,7 +11,8 @@ describe("config validation", () => {
   });
 
   it("warns about unconfirmed ground truth and missing prices", () => {
-    const { warnings } = loadConfig(CONFIG_DIR);
+    const dir = configWith("engines.json", (e) => (e.engines[0].pricing.input_per_million = null, e));
+    const { warnings } = loadConfig(dir);
     expect(warnings.some((w) => w.includes("NOT confirmed"))).toBe(true);
     expect(warnings.some((w) => w.includes("pricing not filled in"))).toBe(true);
   });

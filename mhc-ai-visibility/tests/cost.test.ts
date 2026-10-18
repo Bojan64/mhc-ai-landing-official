@@ -27,6 +27,7 @@ describe("cost estimate and budget cap", () => {
 
   it("marks the estimate incomplete while prices are missing, and refuses to run", () => {
     const c = realConfig();
+    c.engines.engines[0].pricing.input_per_million = null;
     const est = estimateCost(c, buildJobs(c, 1));
     expect(est.incomplete).toBe(true);
     expect(checkBudgetBeforeRun(est, 1000).ok).toBe(false);
