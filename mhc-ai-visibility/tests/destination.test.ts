@@ -12,7 +12,8 @@ import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, select
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
 import { buildReport, renderHeader, renderHotelTable, renderMarkdown } from "../src/destination/report";
 import { executeDestinationRun, DestRunRefused, executeReanalysis } from "../src/destination/run";
-import { ANALYZER_VERSION, AnalysisSchema, finalizeAnalysis, ModelAnalysisSchema, parseStoredAnalysis, truncateQuote, type Analysis, type Destination } from "../src/destination/schemas";
+import { checkBooking, distinctiveTokens, finalizeAnalysis, markPossibleDuplicates } from "../src/destination/finalize";
+import { ANALYZER_VERSION, AnalysisSchema, ModelAnalysisSchema, parseStoredAnalysis, truncateQuote, type Analysis, type Destination } from "../src/destination/schemas";
 import { CONFIG_DIR } from "./helpers";
 
 const quiet = { log: () => {}, retry: { sleep: async () => {}, maxAttempts: 2 } };
@@ -50,7 +51,8 @@ const hotelsIn = (names: string[], overrides: Partial<Analysis["hotels"][number]
   hotels: names.map((name) => ({
     name, lodging_type: "hotel" as const, location_stated: "Bled", sentiment: "recommended" as const, sentiment_quote: `try ${name}`,
     booking_target: "unspecified" as const, booking_evidence: null, cited_sources: [] as string[], linked_urls: [] as string[],
-    possible_duplicate_of: null, quote: name, quote_truncated: false, ...overrides,
+    possible_duplicate_of: null, quote: name, quote_truncated: false,
+    booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null, ...overrides,
   })),
   no_hotels_reason: null,
 });
@@ -210,7 +212,7 @@ describe("links, names and aggregation", () => {
       analysis: { ...hotelsIn(["Penzion Berc", "Garni Hotel Berc"]), hotels: hotelsIn(["Penzion Berc", "Garni Hotel Berc"]).hotels.map((h, i) => (i === 1 ? { ...h, possible_duplicate_of: "Penzion Berc" } : h)) },
     }], BLED);
     expect(flagged.hotels).toHaveLength(2);
-    expect(flagged.hotels.find((h) => h.name === "Garni Hotel Berc")!.flags).toContain('analyzer: possible duplicate of "Penzion Berc"');
+    expect(flagged.hotels.find((h) => h.name === "Garni Hotel Berc")!.flags).toContain('marked as possible duplicate of "Penzion Berc"');
   });
 
   it("counts recommended and not recommended answers and the new booking targets", () => {
@@ -267,7 +269,10 @@ describe("analyzer prompt and schema", () => {
     const cut = truncateQuote(words(26));
     expect(cut.truncated).toBe(true);
     expect(cut.quote).toBe(`${words(25)}…`);
-    const base = (name: string, q: string) => { const { quote_truncated: _t, ...h } = hotelsIn([name]).hotels[0]; return { ...h, sentiment_quote: q }; };
+    const base = (name: string, q: string) => {
+      const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h } = hotelsIn([name]).hotels[0];
+      return { ...h, sentiment_quote: q };
+    };
     const model = ModelAnalysisSchema.parse({
       hotels: [base("A", words(40)), base("B", words(10))],
       no_hotels_reason: null,
@@ -281,6 +286,72 @@ describe("analyzer prompt and schema", () => {
     const props = (z.toJSONSchema(ModelAnalysisSchema) as any).properties;
     expect(props.analyzer_version).toBeUndefined();
     expect(props.hotels.items.properties.quote_truncated).toBeUndefined();
+    expect(props.hotels.items.properties.booking_demoted).toBeUndefined();
+  });
+
+  const hotel = (name: string, booking_target: "direct" | "ota" | "portal" | "unspecified", booking_evidence: string | null, extra: object = {}) => {
+    const { quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h } = hotelsIn([name]).hotels[0];
+    return { ...h, booking_target, booking_evidence, ...extra };
+  };
+
+  it("booking safety net: keeps explicit pointers, demotes ratings, bracketed links and list mentions, keeps the model's value and the reason", () => {
+    const keep = [
+      "Its official booking site is Charming Bled",
+      "I'd start with the official Sava Hotels & Resorts website, on its Rikli Balance Hotel page",
+      "book it on Booking.com",
+      "Reserve directly via the hotel's website",
+      "email the owners directly",
+    ];
+    for (const e of keep) expect(checkBooking({ booking_target: "ota", booking_evidence: e })).toMatchObject({ booking_target: "ota", booking_demoted: false });
+    const demote: [string | null, RegExp][] = [
+      ["On Booking.com it scores 8.8", /rating or number/],
+      ["Booking.com gives it 8.8", /rating or number/],
+      ['at 9.0 ("Wonderful") from about 2,200 reviews', /rating or number/],
+      ["It scores 8.2 from about 1,600 reviews", /rating or number/],
+      ["([bled.si](https://www.bled.si/en/accommodation/list-of-accommodations/16/vila-bled/?utm_source=openai))", /only a link/],
+      ["([hoteltriglavbled.si](https://www.hoteltriglavbled.si/en/?utm_source=openai))", /only a link/],
+      ["https://www.booking.com/budget/city/si/bled.en-gb.html", /only a link/],
+      ["it currently appears among Booking.com's budget-friendly Bled options", /no booking verb/],
+      ["bled.si", /no booking verb/],
+      [null, /no booking_evidence/],
+    ];
+    for (const [e, reason] of demote) {
+      const r = checkBooking({ booking_target: "portal", booking_evidence: e });
+      expect(r).toMatchObject({ booking_target: "unspecified", booking_demoted: true, booking_demoted_from: "portal" });
+      expect(r.booking_demoted_reason).toMatch(reason);
+      expect(r.booking_evidence).toBe(e); // the evidence is kept for the report
+    }
+    expect(checkBooking({ booking_target: "unspecified", booking_evidence: null })).toMatchObject({ booking_demoted: false });
+  });
+
+  it("finalizeAnalysis demotes in the stored analysis and keeps it valid", () => {
+    const model = ModelAnalysisSchema.parse({
+      hotels: [hotel("Hotel Kompas", "ota", "It scores 8.2 from about 1,600 reviews"), hotel("Old Bled House", "direct", "Its official booking site is Charming Bled")],
+      no_hotels_reason: null,
+    });
+    const out = finalizeAnalysis(model);
+    expect(AnalysisSchema.safeParse(out).success).toBe(true);
+    expect(out.hotels.map((h) => [h.booking_target, h.booking_demoted])).toEqual([["unspecified", true], ["direct", false]]);
+    expect(out.hotels[0].booking_demoted_from).toBe("ota");
+  });
+
+  it("marks hotels of one answer that share a distinctive name part as possible duplicates, without merging", () => {
+    expect(distinctiveTokens("Garni Hotel Berc", ["Bled", "bled"])).toEqual(["berc"]);
+    expect(distinctiveTokens("Vila Bled", ["Bled"])).toEqual([]);
+    const marked = markPossibleDuplicates(
+      ["Penzion Berc", "Garni Hotel Berc", "Vila Bled", "Vila Rajska ptica", "Hotel Triglav Bled", "Old Bled House", "Grand Hotel Toplice", "Hotel Toplice"]
+        .map((name) => ({ name, possible_duplicate_of: null as string | null })),
+      ["Bled"],
+    );
+    expect(marked).toHaveLength(8);
+    const by = Object.fromEntries(marked.map((h) => [h.name, h.possible_duplicate_of]));
+    expect(by["Penzion Berc"]).toBe("Garni Hotel Berc");
+    expect(by["Garni Hotel Berc"]).toBe("Penzion Berc");
+    expect(by["Grand Hotel Toplice"]).toBe("Hotel Toplice");
+    expect(by["Hotel Toplice"]).toBe("Grand Hotel Toplice");
+    for (const n of ["Vila Bled", "Vila Rajska ptica", "Hotel Triglav Bled", "Old Bled House"]) expect(by[n]).toBeNull(); // only generic words in common
+    // a mark set by the model is kept
+    expect(markPossibleDuplicates([{ name: "A Berc", possible_duplicate_of: "X" }, { name: "B Berc", possible_duplicate_of: null }], [])[0].possible_duplicate_of).toBe("X");
   });
 
   it("tells the analyzer: 20-word quotes, explicit pointers for THIS hotel only, with negative and positive examples", () => {
@@ -311,9 +382,17 @@ describe("analyzer prompt and schema", () => {
     expect(parseStoredAnalysis("not json")).toBeNull();
   });
 
+  it("reads third-version analyses (no demotion fields) as version v3, not current", () => {
+    const v3 = { ...hotelsIn(["A"]), analyzer_version: "v3", hotels: hotelsIn(["A"]).hotels.map(({ booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) };
+    const r = parseStoredAnalysis(JSON.stringify(v3))!;
+    expect(r.analysis.analyzer_version).toBe("v3");
+    expect(r.legacy).toBe(true);
+    expect(r.analysis.hotels[0].booking_demoted).toBe(false);
+  });
+
   it("reads second-version analyses (no version field) as version v2, not current", () => {
     const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
-    const v2 = { ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, ...h }) => h) };
+    const v2 = { ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) };
     const r = parseStoredAnalysis(JSON.stringify(v2))!;
     expect(r.analysis.analyzer_version).toBe("v2");
     expect(r.legacy).toBe(true);
@@ -453,6 +532,28 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     expect(md).toContain('recommended ("try Hotel Alpha")');
     expect(md).toContain("book dir/ota/portal/unspec");
     expect(rep.olderAnalyses).toBe(0);
+    expect(rep.demoted).toEqual([]);
+    expect(md).toContain("BOOKING POINTERS DEMOTED BY THE CODE");
+  });
+
+  it("lists every demoted booking pointer separately in the report", async () => {
+    const c = pricedConfig();
+    const { db } = setupRun(c, 1);
+    const demotingAnalyzer: AnalyzeFn = async () => ({
+      analysis: finalizeAnalysis(ModelAnalysisSchema.parse({
+        hotels: [(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => ({ ...h, booking_target: "ota", booking_evidence: "On Booking.com it scores 8.8" }))(hotelsIn(["Hotel Rating"]).hotels[0])],
+        no_hotels_reason: null,
+      })),
+      raw_output: "{}", error: null, input_tokens: 1, output_tokens: 1, cost_usd: 0,
+    });
+    await executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: fake().factory, analyzerFactory: () => demotingAnalyzer, ...quiet });
+    const rep = buildReport(db, c, "r");
+    expect(rep.demoted).toHaveLength(24);
+    expect(rep.demoted[0]).toMatchObject({ hotel: "Hotel Rating", from: "ota" });
+    const md = renderMarkdown(rep);
+    expect(md).toContain("24 case(s)");
+    expect(md).toContain("rating or number");
+    expect(rep.agg.hotels[0].booking).toEqual({ direct: 0, ota: 0, portal: 0, unspecified: 24 });
   });
 
   it("warns in the report when an answer still has an older-version analysis", async () => {
@@ -510,7 +611,7 @@ describe("re-analysis of stored answers (no engine is asked again)", () => {
     expect(selectStaleAnalyses(db, "r")).toHaveLength(24);
     const first = selectDestAnswers(db, "r")[0];
     const { analyzer_version: _v, ...rest } = hotelsIn(["A"]);
-    const v2 = JSON.stringify({ ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, ...h }) => h) });
+    const v2 = JSON.stringify({ ...rest, hotels: rest.hotels.map(({ quote_truncated: _t, booking_demoted: _d, booking_demoted_from: _f, booking_demoted_reason: _r, ...h }) => h) });
     saveDestAnalysis(db, first.job.job_id, { analyzer_model: "m", analysis_json: v2, raw_output: v2, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
     expect(selectStaleAnalyses(db, "r")).toHaveLength(24); // v2 is still not current
     const cur = JSON.stringify(hotelsIn(["A"]));

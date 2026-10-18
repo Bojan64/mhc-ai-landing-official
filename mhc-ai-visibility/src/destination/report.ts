@@ -19,6 +19,8 @@ export interface ReportData {
   /** Answers whose newest analysis is from an older analyzer version (booking and sentiment fields are not comparable). */
   olderAnalyses: number;
   agg: Aggregation;
+  /** Booking pointers the code demoted to "unspecified" because the evidence was no explicit pointer. */
+  demoted: { engine_id: string; question_id: string; hotel: string; from: string; evidence: string | null; reason: string }[];
   /** Recommendations of hotels that hand-checked facts say are closed. */
   closedAudit: ClosedAudit[];
   /** planned vs answered, per engine */
@@ -41,6 +43,14 @@ function sourcesOf(cfg: DestinationConfig, a: DestAnswerRow): SourceRef[] {
   } catch {
     return [];
   }
+}
+
+function demotedBookings(answers: DestAnswerRow[], analyses: Map<number, Analysis>): ReportData["demoted"] {
+  const out: ReportData["demoted"] = [];
+  for (const a of answers)
+    for (const h of analyses.get(a.job.job_id)?.hotels ?? [])
+      if (h.booking_demoted) out.push({ engine_id: a.job.engine_id, question_id: a.job.question_id, hotel: h.name, from: h.booking_demoted_from ?? "?", evidence: h.booking_evidence, reason: h.booking_demoted_reason ?? "" });
+  return out;
 }
 
 export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): ReportData {
@@ -95,7 +105,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), demoted: demotedBookings(answers, analyses), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -179,6 +189,14 @@ export function renderClosedHotels(r: ReportData): string {
   return out.join("\n");
 }
 
+export function renderDemoted(r: ReportData): string {
+  const head = "BOOKING POINTERS DEMOTED BY THE CODE (the model named a booking place, but its evidence is no explicit pointer to book that hotel, so booking = unspecified)";
+  if (!r.demoted.length) return `${head}\n(none)`;
+  const lines = [head, `${r.demoted.length} case(s). Check that none of them was a real pointer.`];
+  for (const d of r.demoted) lines.push(`  ${d.engine_id} ${d.question_id} · ${d.hotel} · model said ${d.from} · evidence: "${clipLine(d.evidence ?? "", 160)}" · ${d.reason}`);
+  return lines.join("\n");
+}
+
 export function renderCost(r: ReportData): string {
   const rows: (string | number)[][] = [["item", "calls", "estimate", "actual", "prices"]];
   for (const x of r.cost.rows) rows.push([x.key, x.calls, usd(x.estimateUsd), usd(x.actualUsd), x.status]);
@@ -195,7 +213,7 @@ function renderAnalysisLine(a: Analysis | undefined): string {
   if (!a.hotels.length) return `  extracted: no hotel named${a.no_hotels_reason ? ` — ${a.no_hotels_reason}` : ""}`;
   return a.hotels.map((h, i) => {
     const head = `  ${i + 1}. ${h.name} [${h.lodging_type}] location: ${h.location_stated ?? "—"} | ${h.sentiment}${h.sentiment_quote ? ` ("${clip(h.sentiment_quote, 140)}"${h.quote_truncated ? " [quote cut to 25 words]" : ""})` : ""}`;
-    const book = `     booking: ${h.booking_target}${h.booking_evidence ? ` ("${clip(h.booking_evidence, 90)}")` : ""}`;
+    const book = `     booking: ${h.booking_target}${h.booking_evidence ? ` ("${clip(h.booking_evidence, 90)}")` : ""}${h.booking_demoted ? ` [DEMOTED from ${h.booking_demoted_from}: ${h.booking_demoted_reason}]` : ""}`;
     const extra = [
       h.cited_sources.length ? `cited: ${h.cited_sources.join(", ")}` : "",
       h.linked_urls.length ? `urls: ${h.linked_urls.map((u) => clip(u, 80)).join(" ")}` : "",
@@ -222,7 +240,7 @@ export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswer
 
 /** Terminal report: header, table, checks, cost, a few examples of answer vs extraction. */
 export function renderTerminal(r: ReportData, o: { examples: number; maxChars: number }): string {
-  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", "COST (estimate vs actual)", renderCost(r)];
+  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", renderDemoted(r), "", "COST (estimate vs actual)", renderCost(r)];
   if (o.examples > 0) {
     // spread the examples over different engines
     const pick: DestAnswerRow[] = [];
@@ -244,6 +262,7 @@ export function renderMarkdown(r: ReportData): string {
     "", "## Hotels by number of mentions", fence(renderHotelTable(r)),
     "", "## Manual check", fence(renderChecks(r)),
     "", "## Priporočila nedosegljivih hotelov (recommendations of unavailable hotels)", fence(renderClosedHotels(r)),
+    "", "## Booking pointers demoted by the code", fence(renderDemoted(r)),
     "", "## Cost", fence(renderCost(r)),
     "", "## Verbatim answers", fence(renderAnswers(r, 0)),
     "",

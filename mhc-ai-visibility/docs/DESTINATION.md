@@ -8,7 +8,7 @@ own database (`data/destination.db`). Phases 3 and 4 of the hotel mode are untou
 1. Asks 8 guest-style questions about one destination (`{d}` = destination name) to each engine in
    `web_search` mode only (default engines: OpenAI, Gemini, Claude Sonnet 5.5), `REPETITIONS` times each.
 2. Stores every answer and its sources unchanged (append-only).
-3. An analyzer (Claude Haiku, forced tool call) extracts per answer, for every named lodging in order of first mention:
+3. An analyzer (Claude Sonnet 5.5 since analyzer v4, forced tool call; Haiku 4.5 before) extracts per answer, for every named lodging in order of first mention:
    - the location the answer gives;
    - `sentiment` (`recommended` / `neutral` / `not_recommended`) with `sentiment_quote`: an exact quote it is based on. The model is asked
      for at most 20 words; the code cuts anything over 25 words to 25 words + "…" and sets `quote_truncated: true`. A long quote never makes an analysis invalid;
@@ -56,9 +56,19 @@ That last count is a text heuristic (a line that names the hotel or an alias tog
 "closed", "reopening", "renovation"; "renovated" does not count), so the matching lines are printed for a check by eye.
 
 ## Analyzer versions
-Every stored analysis carries `analyzer_version` (current: `v3`, constant `ANALYZER_VERSION` in `schemas.ts`; raise it whenever the prompt or
+Every stored analysis carries `analyzer_version` (current: `v4`, constant `ANALYZER_VERSION` in `schemas.ts`; raise it whenever the prompt or
 the meaning of a field changes). `destination-reanalyze` re-analyses every answer whose newest valid analysis is not the current version.
-v2 analyses (no version field, booking rule looser, quotes rejected above 25 words) are still read and shown as `v2`.
+v2 analyses (no version field, booking rule looser, quotes rejected above 25 words) and v3 analyses (Haiku, booking rule only in the
+prompt) are still read and shown as `v2` / `v3`.
+
+v4 adds two safety nets in code, because the model did not follow the booking rule reliably (in v3, 7 of 9 booking pointers were only ratings
+or bracketed source links):
+- **Booking safety net** (`src/destination/finalize.ts`): a `booking_target` other than `unspecified` is kept only if `booking_evidence`
+  contains an explicit pointer (a booking verb or "official site" phrase). Otherwise the code sets `booking_target` to `unspecified`, marks
+  `booking_demoted: true` and keeps the model's value (`booking_demoted_from`), the evidence and the reason. The report lists every demoted case.
+  Wording that is a pointer but uses none of the cue words would be demoted wrongly; that is why the list is printed.
+- **Possible duplicates**: hotels of one answer that share a distinctive part of the name (not generic words such as hotel, vila, villa, garni,
+  penzion, grand, and not the destination name) are both marked in `possible_duplicate_of` for manual review. Nothing is merged.
 The first analyzer version (v1) stored `recommended` and a booking pointer that also counted cited sources and links
 (`hotel_site` / `ota` / `other_link` / `none`). Those analyses stay in the database (append-only) and the report still reads them,
 but shows their booking column as `unspecified` and warns that they are not comparable. Analyses in the current format replace them

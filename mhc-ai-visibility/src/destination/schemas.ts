@@ -43,8 +43,8 @@ export const SENTIMENTS = ["recommended", "neutral", "not_recommended"] as const
 export const LODGING_TYPES = ["hotel", "guesthouse", "apartment", "hostel", "camp", "resort", "other"] as const;
 
 /** Version of the analyzer prompt and output. Raise it whenever the prompt or the meaning of a field changes: "destination-reanalyze" re-analyses answers whose newest analysis has another version. */
-export const ANALYZER_VERSION = "v3";
-export const ANALYZER_VERSIONS = ["v1", "v2", "v3"] as const;
+export const ANALYZER_VERSION = "v4";
+export const ANALYZER_VERSIONS = ["v1", "v2", "v3", "v4"] as const;
 
 /** Longest sentiment_quote kept as written; a longer one is cut by the code (the model is asked for at most 20 words). */
 export const MAX_QUOTE_WORDS = 25;
@@ -87,7 +87,16 @@ export const ModelAnalysisSchema = z.strictObject({
 });
 export type ModelAnalysis = z.infer<typeof ModelAnalysisSchema>;
 
-export const AnalyzedHotelSchema = z.strictObject({ ...hotelFields, quote_truncated: z.boolean() });
+// Added by the code after the model: quote cut, booking pointer demoted by the safety net.
+const codeFields = {
+  quote_truncated: z.boolean(),
+  // true = the model gave a booking_target but its booking_evidence is no explicit pointer to book this accommodation,
+  // so the code set booking_target to "unspecified". The model's value and the reason are kept.
+  booking_demoted: z.boolean(),
+  booking_demoted_from: z.enum(BOOKING_TARGETS).nullable(),
+  booking_demoted_reason: z.string().nullable(),
+};
+export const AnalyzedHotelSchema = z.strictObject({ ...hotelFields, ...codeFields });
 export type AnalyzedHotel = z.infer<typeof AnalyzedHotelSchema>;
 
 /** What is stored and used everywhere after the analyzer. */
@@ -98,19 +107,12 @@ export const AnalysisSchema = z.strictObject({
 });
 export type Analysis = z.infer<typeof AnalysisSchema>;
 
-/** Model output → stored analysis: cuts over-long sentiment quotes (never rejects for length) and stamps the version. */
-export function finalizeAnalysis(model: ModelAnalysis): Analysis {
-  return {
-    analyzer_version: ANALYZER_VERSION,
-    no_hotels_reason: model.no_hotels_reason,
-    hotels: model.hotels.map((h) => {
-      const q = truncateQuote(h.sentiment_quote);
-      return { ...h, sentiment_quote: q.quote, quote_truncated: q.truncated };
-    }),
-  };
-}
-
 // ---- analyses stored by older analyzer versions (kept in the database, never rewritten) ----
+
+// v3: like the current format but without the booking-demotion fields (prompt-only booking rule).
+const V3HotelSchema = z.strictObject({ ...hotelFields, quote_truncated: z.boolean() });
+const V3AnalysisSchema = z.strictObject({ analyzer_version: z.literal("v3"), hotels: z.array(V3HotelSchema), no_hotels_reason: z.string().nullable() });
+const noDemotion = { booking_demoted: false, booking_demoted_from: null, booking_demoted_reason: null } as const;
 
 // v2: new fields, but no analyzer_version / quote_truncated, and a looser booking rule.
 const V2HotelSchema = z.strictObject(hotelFields);
@@ -130,7 +132,7 @@ const V1AnalysisSchema = z.strictObject({ hotels: z.array(V1HotelSchema), no_hot
 
 /**
  * Reads a stored analysis of any version. Older ones are shown in the current shape without guessing:
- * v1 booking pointers become "unspecified" (v1 counted cited sources and links); v2 is kept as written.
+ * v1 booking pointers become "unspecified" (v1 counted cited sources and links); v2 and v3 are kept as written (their booking values were not checked by the code).
  * `legacy` = the analysis is not from the current analyzer version.
  */
 export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy: boolean } | null {
@@ -138,9 +140,13 @@ export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy:
   try { raw = JSON.parse(json); } catch { return null; }
   const cur = AnalysisSchema.safeParse(raw);
   if (cur.success) return { analysis: cur.data, legacy: cur.data.analyzer_version !== ANALYZER_VERSION };
+  const v3 = V3AnalysisSchema.safeParse(raw);
+  if (v3.success) {
+    return { legacy: true, analysis: { analyzer_version: "v3", no_hotels_reason: v3.data.no_hotels_reason, hotels: v3.data.hotels.map((h) => ({ ...h, ...noDemotion })) } };
+  }
   const v2 = V2AnalysisSchema.safeParse(raw);
   if (v2.success) {
-    return { legacy: true, analysis: { analyzer_version: "v2", no_hotels_reason: v2.data.no_hotels_reason, hotels: v2.data.hotels.map((h) => ({ ...h, quote_truncated: false })) } };
+    return { legacy: true, analysis: { analyzer_version: "v2", no_hotels_reason: v2.data.no_hotels_reason, hotels: v2.data.hotels.map((h) => ({ ...h, quote_truncated: false, ...noDemotion })) } };
   }
   const v1 = V1AnalysisSchema.safeParse(raw);
   if (!v1.success) return null;
@@ -151,7 +157,7 @@ export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy:
       no_hotels_reason: v1.data.no_hotels_reason,
       hotels: v1.data.hotels.map((h) => ({
         name: h.name, lodging_type: h.lodging_type, location_stated: h.location_stated,
-        sentiment: h.recommended ? "recommended" : "not_recommended", sentiment_quote: "", quote_truncated: false,
+        sentiment: h.recommended ? "recommended" : "not_recommended", sentiment_quote: "", quote_truncated: false, ...noDemotion,
         booking_target: "unspecified", booking_evidence: null, cited_sources: [],
         linked_urls: h.booking_evidence && /^https?:\/\//.test(h.booking_evidence) ? [h.booking_evidence] : [],
         possible_duplicate_of: null, quote: h.quote,

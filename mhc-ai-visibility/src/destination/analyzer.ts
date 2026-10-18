@@ -4,7 +4,8 @@ import type { EnginesConfig } from "../config/schemas";
 import { apiKeyFor } from "../engines";
 import { classifyUrl, extractUrls } from "./aggregate";
 import type { SourceDomains } from "../config/schemas";
-import { finalizeAnalysis, ModelAnalysisSchema, type Analysis, type Destination } from "./schemas";
+import { finalizeAnalysis } from "./finalize";
+import { ModelAnalysisSchema, type Analysis, type Destination } from "./schemas";
 import { callCost } from "./plan";
 
 export const TOOL_NAME = "record_destination_analysis";
@@ -121,6 +122,6 @@ export function createAnthropicAnalyzer(engines: EnginesConfig, domains: SourceD
         error: `schema: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`, ...base,
       };
     // over-long sentiment quotes are cut here, never rejected
-    return { analysis: finalizeAnalysis(parsed.data), raw_output: JSON.stringify(block.input), error: null, ...base };
+    return { analysis: finalizeAnalysis(parsed.data, [input.destination.name, ...input.destination.location_match]), raw_output: JSON.stringify(block.input), error: null, ...base };
   };
 }

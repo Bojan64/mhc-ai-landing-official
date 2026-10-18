@@ -19,6 +19,6 @@
     "openai": { "status": "verified", "note": "preveril lastnik na uradni strani, 18. 10. 2026 (developers.openai.com/api/docs/pricing): gpt-6-astra $10/$50 per million tokens, web search $10 per 1000 calls" },
     "gemini": { "status": "unverified", "note": "official page not reachable; sources disagree on token prices; grounding $14 per 1000 queries not confirmed" },
     "anthropic": { "status": "verified", "note": "platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-18: Sonnet 5.5 $2/$10, web search $10 per 1000" },
-    "analyzer": { "status": "verified", "note": "same page, checked 2026-10-08: Haiku 4.5 $1/$5" }
+    "analyzer": { "status": "verified", "note": "analyzer is now claude-sonnet-5-5: $2/$10, same price as the answer engine, checked 2026-10-18 (owner)" }
   }
 }

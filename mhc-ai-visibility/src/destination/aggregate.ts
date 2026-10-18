@@ -162,7 +162,7 @@ export function aggregate(answers: AnswerForAggregation[], dest: Destination): A
     if (acc.badLocations.size) flags.push(`location differs: ${[...acc.badLocations].join(" / ")}`);
     else if (acc.nullLocations === mentions) flags.push("location never stated");
     if (acc.anySourcesSeen && !acc.supported) flags.push("name not found in any source");
-    for (const d of acc.duplicateOf) flags.push(`analyzer: possible duplicate of "${d}"`);
+    for (const d of acc.duplicateOf) flags.push(`marked as possible duplicate of "${d}"`);
     const toks = key.split(" ");
     for (const other of keys) {
       if (other === key) continue;
