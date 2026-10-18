@@ -409,7 +409,7 @@ describe("destination analyzer is separate from the hotel-mode analyzer", () => 
   it("the destination analyzer is Sonnet 5.5 without a temperature, and its request has no temperature key", () => {
     const c = cfgWith();
     const a = c.destination.destination_analyzer;
-    expect(a).toMatchObject({ model: "claude-sonnet-5-5", temperature: null, cost_assumptions: { input_tokens: 2900, output_tokens: 1000 } });
+    expect(a).toMatchObject({ model: "claude-sonnet-5-5", temperature: null, cost_assumptions: { input_tokens: 3440, output_tokens: 1160 } });
     expect(a.pricing).toEqual({ input_per_million: 2, output_per_million: 10, per_search: 0 });
     const params = buildAnalyzerParams(a, tool, input, c.sourceDomains);
     expect("temperature" in params).toBe(false);
@@ -430,7 +430,7 @@ describe("destination analyzer is separate from the hotel-mode analyzer", () => 
     const after = estimateDestinationCost(c, jobs).lines.find((l) => l.key === "analyzer")!;
     expect(after.totalUsd).toBe(before.totalUsd);
     expect(before.label).toContain("claude-sonnet-5-5");
-    expect(before.perCall.totalUsd).toBeCloseTo((2900 * 2 + 1000 * 10) / 1e6);
+    expect(before.perCall.totalUsd).toBeCloseTo((3440 * 2 + 1160 * 10) / 1e6);
   });
 
   it("rejects a destination analyzer with an out-of-range temperature", () => {
