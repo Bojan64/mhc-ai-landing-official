@@ -91,7 +91,7 @@ export async function executeDestinationRun(
   const factory = o.adapterFactory ?? createAdapter;
   const adapters = new Map<string, EngineAdapter>();
   for (const id of new Set(jobs.map((j) => j.engine_id))) adapters.set(id, factory(engines.get(id)!, cfg.engines));
-  const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.engines, c.sourceDomains)))(cfg);
+  const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.destination.destination_analyzer, c.sourceDomains)))(cfg);
 
   log(
     `Starting ${jobs.length} answer job(s) for run "${runId}" (${dest.name}). Estimated cost €${estWithExtra.knownEur.toFixed(2)}; ` +
@@ -191,12 +191,12 @@ export async function executeDestinationRun(
   // Step 2: analysis of every answer that has no valid analysis yet.
   const toAnalyze = selectUnanalyzed(db, runId, o.engines);
   const analyzerRetry: RetryOptions = { ...retry, onAttempt: undefined };
-  const aLimiter = new Limiter(cfg.engines.analyzer.max_concurrency, cfg.engines.analyzer.requests_per_minute);
+  const aLimiter = new Limiter(cfg.destination.destination_analyzer.max_concurrency, cfg.destination.destination_analyzer.requests_per_minute);
   const aQueue = [...toAnalyze];
   let analyzed = 0;
   let analysisFailed = 0;
   const perAnalysis = est.perCallUsd.analyzer ?? 0;
-  const aWorkers = Array.from({ length: cfg.engines.analyzer.max_concurrency }, async () => {
+  const aWorkers = Array.from({ length: cfg.destination.destination_analyzer.max_concurrency }, async () => {
     while (aQueue.length && !shouldStop(perAnalysis)) {
       const job = aQueue.shift()!;
       reservedUsd += perAnalysis;
@@ -204,7 +204,7 @@ export async function executeDestinationRun(
         const question = job.prompt_text_rendered;
         const out = await withRetry(() => aLimiter.run(() => analyze({ question, answer: job.raw_answer, destination: dest })), analyzerRetry);
         saveDestAnalysis(db, job.job_id, {
-          analyzer_model: cfg.engines.analyzer.model,
+          analyzer_model: cfg.destination.destination_analyzer.model,
           analysis_json: out.analysis ? JSON.stringify(out.analysis) : null,
           raw_output: out.raw_output, schema_valid: out.analysis !== null, error: out.error,
           input_tokens: out.input_tokens, output_tokens: out.output_tokens, cost_estimate: out.cost_usd,
@@ -296,11 +296,11 @@ export async function executeReanalysis(
   const summary: ReanalyzeSummary = { candidates: queue.length, analyzed: 0, analysisFailed: 0, estimatedUsd, spentUsd: 0, spentTotalUsd: spentBeforeUsd, stopReason: "completed" };
   if (!queue.length) { log("Nothing to re-analyse: every answer already has an analysis in the current format."); return summary; }
 
-  const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.engines, c.sourceDomains)))(cfg);
+  const analyze = (o.analyzerFactory ?? ((c) => createAnthropicAnalyzer(c.destination.destination_analyzer, c.sourceDomains)))(cfg);
   log(`Re-analysing ${queue.length} stored answer(s) of run "${runId}" (${dest.name}); no engine is asked again. Estimated cost €${est.knownEur.toFixed(2)}; already spent on this run €${(spentBeforeUsd * rate).toFixed(2)}; hard budget €${budgetEur.toFixed(2)}.`);
 
   const retry: RetryOptions = { ...DEFAULT_RETRY, ...o.retry, onAttempt: undefined };
-  const limiter = new Limiter(cfg.engines.analyzer.max_concurrency, cfg.engines.analyzer.requests_per_minute);
+  const limiter = new Limiter(cfg.destination.destination_analyzer.max_concurrency, cfg.destination.destination_analyzer.requests_per_minute);
   const perAnalysis = est.perCallUsd.analyzer ?? 0;
   let reservedUsd = 0;
   let observedMax = 0;
@@ -313,7 +313,7 @@ export async function executeReanalysis(
     try {
       const out = await withRetry(() => limiter.run(() => analyze({ question: job.prompt_text_rendered, answer: job.raw_answer, destination: dest })), retry);
       saveDestAnalysis(db, job.job_id, {
-        analyzer_model: cfg.engines.analyzer.model,
+        analyzer_model: cfg.destination.destination_analyzer.model,
         analysis_json: out.analysis ? JSON.stringify(out.analysis) : null,
         raw_output: out.raw_output, schema_valid: out.analysis !== null, error: out.error,
         input_tokens: out.input_tokens, output_tokens: out.output_tokens, cost_estimate: out.cost_usd,
@@ -345,7 +345,7 @@ export async function executeReanalysis(
     const first = queue.shift()!;
     if (!(await one(first))) summary.stopReason = "first_invalid";
   }
-  const workers = Array.from({ length: cfg.engines.analyzer.max_concurrency }, async () => {
+  const workers = Array.from({ length: cfg.destination.destination_analyzer.max_concurrency }, async () => {
     while (queue.length && !stopNow(Math.max(perAnalysis, observedMax))) await one(queue.shift()!);
   });
   await Promise.all(workers);

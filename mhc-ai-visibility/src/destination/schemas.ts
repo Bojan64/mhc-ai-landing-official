@@ -23,8 +23,28 @@ const PriceStatusSchema = z.strictObject({
   note: z.string(),
 });
 
+// The analyzer of destination mode. Kept apart from engines.json, whose "analyzer" belongs to the hotel mode.
+export const DestAnalyzerSchema = z.strictObject({
+  ...note,
+  provider: z.literal("anthropic"),
+  model: z.string().min(1),
+  // null = the parameter is not sent at all (newer models reject "temperature").
+  temperature: z.number().min(0).max(1).nullable(),
+  max_concurrency: z.number().int().min(1),
+  requests_per_minute: z.number().int().min(1),
+  pricing: z.strictObject({
+    input_per_million: z.number().min(0).nullable(),
+    output_per_million: z.number().min(0).nullable(),
+    per_search: z.number().min(0).nullable(),
+  }),
+  // Average tokens per analysis, for the cost estimate only.
+  cost_assumptions: z.strictObject({ input_tokens: z.number().min(0), output_tokens: z.number().min(0) }),
+});
+export type DestAnalyzer = z.infer<typeof DestAnalyzerSchema>;
+
 export const DestinationFileSchema = z.strictObject({
   ...note,
+  destination_analyzer: DestAnalyzerSchema,
   destinations: z.array(DestinationSchema).min(1),
   engines: z.array(z.string().min(1)).min(1),
   questions: z.array(QuestionSchema).min(1),

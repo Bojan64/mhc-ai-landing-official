@@ -107,8 +107,8 @@ export function estimateDestinationCost(cfg: DestinationConfig, jobs: { engine_i
       priceStatus: ps.status, priceNote: ps.note,
     });
   }
-  const an = cfg.engines.analyzer;
-  const aa = cfg.engines.cost_assumptions.analyzer;
+  const an = cfg.destination.destination_analyzer;
+  const aa = an.cost_assumptions;
   const aPer = callCost(an.pricing, { input_tokens: aa.input_tokens, output_tokens: aa.output_tokens, searches: 0 });
   const aps = priceStatus(cfg.destination, "analyzer");
   perCallUsd.analyzer = aPer.totalUsd ?? 0;

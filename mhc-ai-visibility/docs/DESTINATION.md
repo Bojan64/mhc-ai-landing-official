@@ -8,7 +8,7 @@ own database (`data/destination.db`). Phases 3 and 4 of the hotel mode are untou
 1. Asks 8 guest-style questions about one destination (`{d}` = destination name) to each engine in
    `web_search` mode only (default engines: OpenAI, Gemini, Claude Sonnet 5.5), `REPETITIONS` times each.
 2. Stores every answer and its sources unchanged (append-only).
-3. An analyzer (Claude Sonnet 5.5 since analyzer v4, forced tool call; Haiku 4.5 before) extracts per answer, for every named lodging in order of first mention:
+3. An analyzer (`destination_analyzer` in `destination.json`: Claude Sonnet 5.5 since analyzer v4, forced tool call; Haiku 4.5 before) extracts per answer, for every named lodging in order of first mention:
    - the location the answer gives;
    - `sentiment` (`recommended` / `neutral` / `not_recommended`) with `sentiment_quote`: an exact quote it is based on. The model is asked
      for at most 20 words; the code cuts anything over 25 words to 25 words + "…" and sets `quote_truncated: true`. A long quote never makes an analysis invalid;
@@ -54,6 +54,11 @@ For every hotel with status `closed` (and for answers given before `valid_until`
 `not_recommended` (with the `sentiment_quote`), and separately how often the engine itself says the hotel is closed.
 That last count is a text heuristic (a line that names the hotel or an alias together with a closure word such as
 "closed", "reopening", "renovation"; "renovated" does not count), so the matching lines are printed for a check by eye.
+
+## Analyzer configuration
+Destination mode reads ONLY `destination_analyzer` in `config/destination.json` (model, `temperature`, rate limits, prices, token assumptions).
+`temperature: null` means the parameter is not sent at all: Sonnet 5.5 rejects it ("`temperature` is deprecated for this model").
+The `analyzer` block in `engines.json` belongs to the hotel mode (Haiku 4.5, temperature 0) and is not used by destination mode.
 
 ## Analyzer versions
 Every stored analysis carries `analyzer_version` (current: `v4`, constant `ANALYZER_VERSION` in `schemas.ts`; raise it whenever the prompt or

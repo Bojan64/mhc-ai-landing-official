@@ -1,11 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import type { EnginesConfig } from "../config/schemas";
 import { apiKeyFor } from "../engines";
 import { classifyUrl, extractUrls } from "./aggregate";
 import type { SourceDomains } from "../config/schemas";
 import { finalizeAnalysis } from "./finalize";
-import { ModelAnalysisSchema, type Analysis, type Destination } from "./schemas";
+import { ModelAnalysisSchema, type Analysis, type DestAnalyzer, type Destination } from "./schemas";
 import { callCost } from "./plan";
 
 export const TOOL_NAME = "record_destination_analysis";
@@ -80,12 +79,23 @@ function toolSchema(): Anthropic.Tool["input_schema"] {
   return schema as Anthropic.Tool["input_schema"];
 }
 
+/** The request for one analysis. "temperature" is left out when the config says null (newer models reject it). */
+export function buildAnalyzerParams(cfg: DestAnalyzer, tool: Anthropic.Tool, input: AnalyzerInput, domains: SourceDomains) {
+  return {
+    model: cfg.model,
+    max_tokens: 4000,
+    ...(cfg.temperature === null ? {} : { temperature: cfg.temperature }),
+    system: ANALYZER_SYSTEM_PROMPT,
+    messages: [{ role: "user" as const, content: buildAnalyzerUserMessage(input, domains) }],
+    tools: [tool],
+  };
+}
+
 /** Real analyzer: Claude with a forced tool call (falls back to tool_choice auto if the model rejects forcing). */
-export function createAnthropicAnalyzer(engines: EnginesConfig, domains: SourceDomains): AnalyzeFn {
+export function createAnthropicAnalyzer(cfg: DestAnalyzer, domains: SourceDomains): AnalyzeFn {
   const key = apiKeyFor("anthropic");
   if (!key) throw new Error("MHC_ANTHROPIC_API_KEY is not set (needed for the analyzer)");
   const client = new Anthropic({ apiKey: key, maxRetries: 0, timeout: 300_000 });
-  const cfg = engines.analyzer;
   const tool: Anthropic.Tool = {
     name: TOOL_NAME,
     description: "Record the accommodations named in the answer, in order of first mention.",
@@ -93,14 +103,7 @@ export function createAnthropicAnalyzer(engines: EnginesConfig, domains: SourceD
   };
 
   return async (input) => {
-    const params = {
-      model: cfg.model,
-      max_tokens: 4000,
-      temperature: cfg.temperature,
-      system: ANALYZER_SYSTEM_PROMPT,
-      messages: [{ role: "user" as const, content: buildAnalyzerUserMessage(input, domains) }],
-      tools: [tool],
-    };
+    const params = buildAnalyzerParams(cfg, tool, input, domains);
     let res: Anthropic.Message;
     try {
       res = await client.messages.create({ ...params, tool_choice: { type: "tool", name: TOOL_NAME } });

@@ -3,6 +3,16 @@
   "destinations": [
     { "destination_id": "bled", "name": "Bled", "country": "Slovenia", "location_match": ["bled"] }
   ],
+  "destination_analyzer": {
+    "_note": "The analyzer of destination mode (the hotel mode keeps its own in engines.json). Sonnet 5.5 rejects the temperature parameter, so temperature is null = not sent. Price $2/$10 checked 2026-10-18. Token assumptions: Haiku 4.5 averaged 2,908 input / 995 output tokens per analysis with analyzer v3; not yet measured on Sonnet 5.5.",
+    "provider": "anthropic",
+    "model": "claude-sonnet-5-5",
+    "temperature": null,
+    "max_concurrency": 4,
+    "requests_per_minute": 50,
+    "pricing": { "input_per_million": 2.0, "output_per_million": 10.0, "per_search": 0 },
+    "cost_assumptions": { "input_tokens": 2900, "output_tokens": 1000 }
+  },
   "engines": ["openai", "gemini", "anthropic"],
   "questions": [
     { "id": "D1", "segment": "general", "text": "Where should I stay in {d}? Recommend specific hotels." },

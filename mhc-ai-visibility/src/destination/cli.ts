@@ -86,8 +86,8 @@ function validate(): number {
     rows.push([id, e.model, apiKeyFor(e.provider) ? "set" : `missing (${API_KEY_VARS[e.provider]})`, missing.length ? `MISSING: ${missing.join(", ")}` : "filled"]);
   }
   console.log(`\nEngines:\n${table(rows)}`);
-  const a = cfg.engines.analyzer;
-  console.log(`\nAnalyzer: ${a.model}   API key: ${apiKeyFor("anthropic") ? "set" : `missing (${API_KEY_VARS.anthropic})`}`);
+  const a = cfg.destination.destination_analyzer;
+  console.log(`\nAnalyzer: ${a.model}${a.temperature === null ? "" : ` (temperature ${a.temperature})`}   API key: ${apiKeyFor("anthropic") ? "set" : `missing (${API_KEY_VARS.anthropic})`}`);
   console.log("\nConfig is valid.");
   return 0;
 }

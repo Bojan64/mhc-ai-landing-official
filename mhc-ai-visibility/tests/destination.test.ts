@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AdapterFactory } from "../src/engines";
 import type { EngineResult } from "../src/engines/types";
 import { aggregate, classifyUrl, extractUrls, nameKey, type AnswerForAggregation } from "../src/destination/aggregate";
-import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerUserMessage, type AnalyzeFn } from "../src/destination/analyzer";
+import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerParams, buildAnalyzerUserMessage, type AnalyzeFn } from "../src/destination/analyzer";
 import { loadDestinationConfig, type DestinationConfig } from "../src/destination/config";
 import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, selectDestAnswers, selectStaleAnalyses } from "../src/destination/db";
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
@@ -42,7 +42,7 @@ function pricedConfig(): DestinationConfig {
     e.pricing = { input_per_million: 1, output_per_million: 1, per_search: 0.01 };
     e.requests_per_minute = 600_000;
   }
-  c.engines.analyzer.requests_per_minute = 600_000;
+  c.destination.destination_analyzer.requests_per_minute = 600_000;
   return c;
 }
 
@@ -397,6 +397,48 @@ describe("analyzer prompt and schema", () => {
     expect(r.analysis.analyzer_version).toBe("v2");
     expect(r.legacy).toBe(true);
     expect(r.analysis.hotels[0].quote_truncated).toBe(false);
+  });
+});
+
+describe("destination analyzer is separate from the hotel-mode analyzer", () => {
+  const tool = { name: "t", description: "d", input_schema: { type: "object" as const } };
+  const input = { question: "Q?", answer: "A", destination: BLED };
+
+  it("the destination analyzer is Sonnet 5.5 without a temperature, and its request has no temperature key", () => {
+    const c = cfgWith();
+    const a = c.destination.destination_analyzer;
+    expect(a).toMatchObject({ model: "claude-sonnet-5-5", temperature: null, cost_assumptions: { input_tokens: 2900, output_tokens: 1000 } });
+    expect(a.pricing).toEqual({ input_per_million: 2, output_per_million: 10, per_search: 0 });
+    const params = buildAnalyzerParams(a, tool, input, c.sourceDomains);
+    expect("temperature" in params).toBe(false);
+    expect(params.model).toBe("claude-sonnet-5-5");
+  });
+
+  it("a configured temperature is still sent", () => {
+    const c = cfgWith();
+    expect(buildAnalyzerParams({ ...c.destination.destination_analyzer, temperature: 0 }, tool, input, c.sourceDomains)).toMatchObject({ temperature: 0 });
+  });
+
+  it("the cost estimate reads the destination analyzer, not engines.json", () => {
+    const c = cfgWith();
+    const jobs = buildDestinationJobs(c, BLED, 1);
+    const before = estimateDestinationCost(c, jobs).lines.find((l) => l.key === "analyzer")!;
+    c.engines.analyzer.pricing = { input_per_million: 999, output_per_million: 999, per_search: 0 };
+    c.engines.cost_assumptions.analyzer = { input_tokens: 999999, output_tokens: 999999 };
+    const after = estimateDestinationCost(c, jobs).lines.find((l) => l.key === "analyzer")!;
+    expect(after.totalUsd).toBe(before.totalUsd);
+    expect(before.label).toContain("claude-sonnet-5-5");
+    expect(before.perCall.totalUsd).toBeCloseTo((2900 * 2 + 1000 * 10) / 1e6);
+  });
+
+  it("rejects a destination analyzer with an out-of-range temperature", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mhc-dest-"));
+    cpSync(CONFIG_DIR, dir, { recursive: true });
+    const path = join(dir, "destination.json");
+    const j = JSON.parse(readFileSync(path, "utf8"));
+    j.destination_analyzer.temperature = 3;
+    writeFileSync(path, JSON.stringify(j));
+    expect(loadDestinationConfig(dir).errors.join()).toContain("destination_analyzer");
   });
 });
 
