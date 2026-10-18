@@ -4,6 +4,7 @@ import type { SourceRef } from "../engines/types";
 import { table } from "../util/table";
 import { aggregate, type Aggregation, type AnswerForAggregation, type HotelRow } from "./aggregate";
 import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs } from "./db";
+import { auditClosedHotels, type ClosedAudit } from "./facts";
 import { estimateDestinationCost } from "./plan";
 import { parseStoredAnalysis, type Analysis, type Destination } from "./schemas";
 
@@ -18,6 +19,8 @@ export interface ReportData {
   /** Answers whose analysis comes from the first analyzer version (booking and sentiment fields are not comparable). */
   legacyAnalyses: number;
   agg: Aggregation;
+  /** Recommendations of hotels that hand-checked facts say are closed. */
+  closedAudit: ClosedAudit[];
   /** planned vs answered, per engine */
   engineStatus: { engine_id: string; model: string; planned: number; done: number; failed: number; pending: number; lastError: string | null }[];
   cost: CostComparison;
@@ -92,7 +95,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, legacyAnalyses: legacy, agg, engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, legacyAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -147,6 +150,35 @@ export function renderChecks(r: ReportData): string {
   return lines.join("\n");
 }
 
+const clipLine = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)} …[cut]` : s);
+
+export function renderClosedHotels(r: ReportData): string {
+  const head = "RECOMMENDATIONS OF UNAVAILABLE HOTELS (Priporočila nedosegljivih hotelov)";
+  if (!r.closedAudit.length) return `${head}\n(no hotel with status "closed" in config/destination-facts.json)`;
+  const out: string[] = [head];
+  for (const c of r.closedAudit) {
+    const f = c.fact;
+    out.push(
+      "",
+      `${f.name} — CLOSED${f.valid_until ? ` until ${f.valid_until}` : ""} (checked ${f.checked_on}; source: ${f.source})`,
+      table([
+        ["engine", "answers", "names the hotel", "recommended", "neutral", "not recommended", "engine itself says it is closed"],
+        ...c.rows.map((x) => [x.engine_id, x.answers, x.mentioning, x.recommended, x.neutral, x.notRecommended, `${x.closureMentioned} of ${x.mentioning}`]),
+      ]),
+      "",
+      "Recommended or neutral although the hotel is closed (sentiment_quote = the words the sentiment rests on):",
+    );
+    const bad = c.items.filter((i) => i.sentiment !== "not_recommended");
+    if (!bad.length) out.push("  (none)");
+    for (const i of bad) out.push(`  ${i.engine_id} ${i.question_id} — ${i.sentiment}${i.quote ? `: "${i.quote}"` : " (analysis from the first analyzer version, no quote)"}${i.closureLine ? "  [the same answer also mentions a closure — see below]" : ""}`);
+    out.push("", "Where the engine itself mentions the closure (heuristic: a line that names the hotel and a closure word; check by eye):");
+    const said = c.items.filter((i) => i.closureLine);
+    if (!said.length) out.push("  (none)");
+    for (const i of said) out.push(`  ${i.engine_id} ${i.question_id} (${i.sentiment}): "${clipLine(i.closureLine!, 260)}"`);
+  }
+  return out.join("\n");
+}
+
 export function renderCost(r: ReportData): string {
   const rows: (string | number)[][] = [["item", "calls", "estimate", "actual", "prices"]];
   for (const x of r.cost.rows) rows.push([x.key, x.calls, usd(x.estimateUsd), usd(x.actualUsd), x.status]);
@@ -190,7 +222,7 @@ export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswer
 
 /** Terminal report: header, table, checks, cost, a few examples of answer vs extraction. */
 export function renderTerminal(r: ReportData, o: { examples: number; maxChars: number }): string {
-  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", "COST (estimate vs actual)", renderCost(r)];
+  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", "COST (estimate vs actual)", renderCost(r)];
   if (o.examples > 0) {
     // spread the examples over different engines
     const pick: DestAnswerRow[] = [];
@@ -211,6 +243,7 @@ export function renderMarkdown(r: ReportData): string {
     "", fence(renderHeader(r)),
     "", "## Hotels by number of mentions", fence(renderHotelTable(r)),
     "", "## Manual check", fence(renderChecks(r)),
+    "", "## Priporočila nedosegljivih hotelov (recommendations of unavailable hotels)", fence(renderClosedHotels(r)),
     "", "## Cost", fence(renderCost(r)),
     "", "## Verbatim answers", fence(renderAnswers(r, 0)),
     "",

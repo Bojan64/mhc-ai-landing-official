@@ -3,12 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import { EnginesFileSchema, SourceDomainsSchema, type EnginesConfig, type SourceDomains } from "../config/schemas";
-import { DestinationFileSchema, PLACEHOLDER, type DestinationFile } from "./schemas";
+import { DestinationFileSchema, FactsFileSchema, PLACEHOLDER, type DestinationFile, type HotelFact } from "./schemas";
 
 export interface DestinationConfig {
   destination: DestinationFile;
   engines: EnginesConfig;
   sourceDomains: SourceDomains;
+  /** Hand-checked facts about hotels (destination-facts.json); empty when the file does not exist. */
+  facts: HotelFact[];
   hash: string;
 }
 
@@ -19,7 +21,8 @@ export interface DestinationConfigResult {
 }
 
 /**
- * Load the files destination mode needs: destination.json, engines.json, source-domains.json.
+ * Load the files destination mode needs: destination.json, engines.json, source-domains.json
+ * (and destination-facts.json when it exists).
  * (hotels.json, prompts.json and scoring.json belong to the hotel mode and are not read.)
  */
 export function loadDestinationConfig(configDir: string): DestinationConfigResult {
@@ -52,11 +55,12 @@ export function loadDestinationConfig(configDir: string): DestinationConfigResul
   const destination = read("destination.json", DestinationFileSchema);
   const engines = read("engines.json", EnginesFileSchema);
   const sourceDomains = read("source-domains.json", SourceDomainsSchema);
-  if (!destination || !engines || !sourceDomains) return { config: null, errors, warnings: [] };
+  const facts = existsSync(join(configDir, "destination-facts.json")) ? read("destination-facts.json", FactsFileSchema) : { facts: [] };
+  if (!destination || !engines || !sourceDomains || !facts) return { config: null, errors, warnings: [] };
 
   const cross = crossCheckDestination(destination, engines);
   errors.push(...cross.errors);
-  const config = { destination, engines, sourceDomains, hash: hash.digest("hex") };
+  const config = { destination, engines, sourceDomains, facts: facts.facts, hash: hash.digest("hex") };
   return { config: errors.length ? null : config, errors, warnings: cross.warnings };
 }
 

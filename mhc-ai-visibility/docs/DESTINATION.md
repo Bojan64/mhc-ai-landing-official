@@ -43,6 +43,15 @@ own database (`data/destination.db`). Phases 3 and 4 of the hotel mode are untou
   (run `bled-trial-01`, 2026-10-18, 8 calls each); Gemini still uses the global guess. The analyzer value dates from the first
   analyzer version and the new fields make its output longer, so measure it again after the next analysis.
 
+## Hand-checked hotel facts
+`config/destination-facts.json` holds facts the owner checked by hand: name, aliases, `status` (`closed` / `open`), `valid_until`,
+`source`, `checked_on`. The file is optional and used only by the report; it changes nothing about the questions or the analysis.
+For every hotel with status `closed` (and for answers given before `valid_until`) the report has a section
+"Priporočila nedosegljivih hotelov": per engine how often the hotel is named, how often it is `recommended`, `neutral` or
+`not_recommended` (with the `sentiment_quote`), and separately how often the engine itself says the hotel is closed.
+That last count is a text heuristic (a line that names the hotel or an alias together with a closure word such as
+"closed", "reopening", "renovation"; "renovated" does not count), so the matching lines are printed for a check by eye.
+
 ## Analyzer versions
 The first analyzer version stored `recommended` and a booking pointer that also counted cited sources and links
 (`hotel_site` / `ota` / `other_link` / `none`). Those analyses stay in the database (append-only) and the report still reads them,

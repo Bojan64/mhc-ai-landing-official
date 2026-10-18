@@ -1,0 +1,13 @@
+{
+  "_note": "Hotel facts checked by hand by the owner. Used only in the destination report (section about recommendations of unavailable hotels); they never change what is asked or how answers are analysed. status: closed | open. valid_until: date until which the status holds (null = no known end). A fact applies to answers given before valid_until. Aliases are other spellings of the name that the analyzer may use; matching ignores case, accents, punctuation and the words 'hotel', 'the', 'and'.",
+  "facts": [
+    {
+      "name": "Grand Hotel Toplice",
+      "aliases": ["Hotel Toplice", "Toplice"],
+      "status": "closed",
+      "valid_until": "2027-09-01",
+      "source": "official hotel website (grandhoteltoplice.com), checked by the owner: closed for renovation, bookings from 1 September 2027",
+      "checked_on": "2026-10-18"
+    }
+  ]
+}

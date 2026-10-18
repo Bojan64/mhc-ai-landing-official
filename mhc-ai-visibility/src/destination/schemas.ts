@@ -110,3 +110,20 @@ export function parseStoredAnalysis(json: string): { analysis: Analysis; legacy:
     },
   };
 }
+
+// ---- hand-checked facts about hotels (config/destination-facts.json) ----
+
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must look like 2026-10-18");
+
+export const HotelFactSchema = z.strictObject({
+  name: z.string().min(1),
+  aliases: z.array(z.string().min(1)),
+  status: z.enum(["closed", "open"]),
+  // The status holds for answers given before this date; null = no known end.
+  valid_until: IsoDate.nullable(),
+  source: z.string().min(1),
+  checked_on: IsoDate,
+});
+export type HotelFact = z.infer<typeof HotelFactSchema>;
+
+export const FactsFileSchema = z.strictObject({ ...note, facts: z.array(HotelFactSchema) });
