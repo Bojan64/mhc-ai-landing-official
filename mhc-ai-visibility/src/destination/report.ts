@@ -5,7 +5,7 @@ import { table } from "../util/table";
 import { aggregate, type Aggregation, type AnswerForAggregation, type HotelRow } from "./aggregate";
 import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs } from "./db";
 import { estimateDestinationCost } from "./plan";
-import { AnalysisSchema, type Analysis, type Destination } from "./schemas";
+import { parseStoredAnalysis, type Analysis, type Destination } from "./schemas";
 
 export interface ReportData {
   runId: string;
@@ -15,6 +15,8 @@ export interface ReportData {
   answers: DestAnswerRow[];
   analyses: Map<number, Analysis>;
   invalidAnalyses: number;
+  /** Answers whose analysis comes from the first analyzer version (booking and sentiment fields are not comparable). */
+  legacyAnalyses: number;
   agg: Aggregation;
   /** planned vs answered, per engine */
   engineStatus: { engine_id: string; model: string; planned: number; done: number; failed: number; pending: number; lastError: string | null }[];
@@ -47,16 +49,18 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
 
   const analyses = new Map<number, Analysis>();
   let invalid = 0;
+  let legacy = 0;
   const forAgg: AnswerForAggregation[] = [];
   for (const a of answers) {
     if (!a.analysis_json) { invalid++; continue; }
-    const parsed = AnalysisSchema.safeParse(JSON.parse(a.analysis_json));
-    if (!parsed.success) { invalid++; continue; }
-    analyses.set(a.job.job_id, parsed.data);
+    const parsed = parseStoredAnalysis(a.analysis_json);
+    if (!parsed) { invalid++; continue; }
+    if (parsed.legacy) legacy++;
+    analyses.set(a.job.job_id, parsed.analysis);
     const srcs = sourcesOf(cfg, a);
     forAgg.push({
       job_id: a.job.job_id, engine_id: a.job.engine_id, question_id: a.job.question_id, repetition: a.job.repetition,
-      analysis: parsed.data,
+      analysis: parsed.analysis,
       sourceText: srcs.map((s) => `${s.title ?? ""} ${s.url} ${s.domain ?? ""}`).join(" ").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase(),
       hasSources: srcs.length > 0,
     });
@@ -88,7 +92,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, agg, engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, legacyAnalyses: legacy, agg, engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -108,26 +112,27 @@ export function renderHeader(r: ReportData): string {
     lines.push(`⚠ ENGINE MISSING: ${e.engine_id} produced NO answers (${e.lastError ?? "not run"}). Results below come only from: ${r.engineStatus.filter((x) => x.done > 0).map((x) => x.engine_id).join(", ") || "(none)"}.`);
   for (const e of partial) lines.push(`⚠ ${e.engine_id}: only ${e.done} of ${e.planned} planned answers (${e.lastError ?? "stopped"}). Counts for this engine are lower for that reason.`);
   if (r.invalidAnalyses) lines.push(`⚠ ${r.invalidAnalyses} answer(s) have no valid analysis and are NOT in the counts.`);
+  if (r.legacyAnalyses) lines.push(`⚠ ${r.legacyAnalyses} answer(s) still carry an analysis from the first analyzer version: their booking column shows "unspecified" and they have no sentiment quote. Re-analyse them for comparable booking data.`);
   return lines.join("\n");
 }
 
 function shortBooking(h: HotelRow): string {
-  return `${h.booking.hotel_site}/${h.booking.ota}/${h.booking.other_link}/${h.booking.none}`;
+  return `${h.booking.direct}/${h.booking.ota}/${h.booking.portal}/${h.booking.unspecified}`;
 }
 
 export function renderHotelTable(r: ReportData): string {
   const { agg } = r;
-  const head: string[] = ["#", "hotel", "mentions", "%", "recomm.", ...agg.engines, "avg pos", "book h/ota/oth/none", "check"];
+  const head: string[] = ["#", "hotel", "mentions", "%", "recomm.", "not rec.", ...agg.engines, "avg pos", "book dir/ota/portal/unspec", "check"];
   const rows: (string | number)[][] = [head];
   agg.hotels.forEach((h, i) => {
     rows.push([
-      i + 1, h.name, `${h.mentions}/${agg.totalAnswers}`, `${Math.round((100 * h.mentions) / Math.max(1, agg.totalAnswers))}%`, h.recommended,
+      i + 1, h.name, `${h.mentions}/${agg.totalAnswers}`, `${Math.round((100 * h.mentions) / Math.max(1, agg.totalAnswers))}%`, h.recommended, h.notRecommended,
       ...agg.engines.map((e) => h.byEngine[e] ?? 0), h.avgPosition.toFixed(1), shortBooking(h), h.flags.length ? "CHECK" : "",
     ]);
   });
   const lines = [table(rows)];
   lines.push(`\nMentions = number of answers (out of ${agg.totalAnswers} analysed, over all engines and repetitions) in which the hotel appears; once per answer.`);
-  lines.push("avg pos = average place in the order of first mention (1 = named first). book = how the answer sends the guest to book: hotel site / OTA / other link / no pointer.");
+  lines.push("avg pos = average place in the order of first mention (1 = named first). book = where the answer EXPLICITLY tells the guest to book it: its own site or phone / an online travel agency / a tourism portal / no instruction. Cited sources and bare links do not count as booking instructions.");
   if (agg.answersWithNoHotels) lines.push(`${agg.answersWithNoHotels} answer(s) named no hotel at all.`);
   return lines.join("\n");
 }
@@ -156,7 +161,16 @@ export function renderCost(r: ReportData): string {
 function renderAnalysisLine(a: Analysis | undefined): string {
   if (!a) return "  (no valid analysis)";
   if (!a.hotels.length) return `  extracted: no hotel named${a.no_hotels_reason ? ` — ${a.no_hotels_reason}` : ""}`;
-  return a.hotels.map((h, i) => `  ${i + 1}. ${h.name} [${h.lodging_type}${h.recommended ? "" : ", not recommended"}] location: ${h.location_stated ?? "—"} | booking: ${h.booking_target}${h.booking_evidence ? ` (${clip(h.booking_evidence, 70)})` : ""}`).join("\n");
+  return a.hotels.map((h, i) => {
+    const head = `  ${i + 1}. ${h.name} [${h.lodging_type}] location: ${h.location_stated ?? "—"} | ${h.sentiment}${h.sentiment_quote ? ` ("${clip(h.sentiment_quote, 140)}")` : ""}`;
+    const book = `     booking: ${h.booking_target}${h.booking_evidence ? ` ("${clip(h.booking_evidence, 90)}")` : ""}`;
+    const extra = [
+      h.cited_sources.length ? `cited: ${h.cited_sources.join(", ")}` : "",
+      h.linked_urls.length ? `urls: ${h.linked_urls.map((u) => clip(u, 80)).join(" ")}` : "",
+      h.possible_duplicate_of ? `POSSIBLE DUPLICATE OF "${h.possible_duplicate_of}"` : "",
+    ].filter(Boolean).join(" | ");
+    return [head, book + (extra ? ` | ${extra}` : "")].join("\n");
+  }).join("\n");
 }
 
 export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswerRow[]): string {

@@ -84,10 +84,11 @@ export interface HotelRow {
   /** Number of answers that mention the hotel (counted once per answer). */
   mentions: number;
   recommended: number;
+  notRecommended: number;
   byEngine: Record<string, number>;
   byQuestion: Record<string, number>;
   avgPosition: number;
-  /** Booking target per mention: how often the answer pointed to each. */
+  /** Booking target per mention: how often the answer explicitly told the guest to book there. */
   booking: Record<AnalyzedHotel["booking_target"], number>;
   locations: string[];
   flags: string[];
@@ -103,7 +104,7 @@ export interface Aggregation {
 export function aggregate(answers: AnswerForAggregation[], dest: Destination): Aggregation {
   const engines = [...new Set(answers.map((a) => a.engine_id))].sort();
   type Acc = {
-    names: Map<string, number>; answerIds: Set<number>; recommended: number;
+    names: Map<string, number>; answerIds: Set<number>; recommended: number; notRecommended: number; duplicateOf: Set<string>;
     byEngine: Record<string, number>; byQuestion: Record<string, number>;
     positions: number[]; booking: HotelRow["booking"]; locations: Set<string>; nullLocations: number; badLocations: Set<string>;
     supported: boolean; anySourcesSeen: boolean;
@@ -120,8 +121,8 @@ export function aggregate(answers: AnswerForAggregation[], dest: Destination): A
       let acc = accs.get(key);
       if (!acc) {
         acc = {
-          names: new Map(), answerIds: new Set(), recommended: 0, byEngine: {}, byQuestion: {}, positions: [],
-          booking: { hotel_site: 0, ota: 0, other_link: 0, none: 0 }, locations: new Set(), nullLocations: 0, badLocations: new Set(),
+          names: new Map(), answerIds: new Set(), recommended: 0, notRecommended: 0, duplicateOf: new Set(), byEngine: {}, byQuestion: {}, positions: [],
+          booking: { direct: 0, ota: 0, portal: 0, unspecified: 0 }, locations: new Set(), nullLocations: 0, badLocations: new Set(),
           supported: false, anySourcesSeen: false,
         };
         accs.set(key, acc);
@@ -130,7 +131,9 @@ export function aggregate(answers: AnswerForAggregation[], dest: Destination): A
       if (seenInAnswer.has(key)) return; // a hotel counts once per answer (its first mention)
       seenInAnswer.add(key);
       acc.answerIds.add(a.job_id);
-      if (h.recommended) acc.recommended++;
+      if (h.sentiment === "recommended") acc.recommended++;
+      else if (h.sentiment === "not_recommended") acc.notRecommended++;
+      if (h.possible_duplicate_of) acc.duplicateOf.add(h.possible_duplicate_of);
       acc.byEngine[a.engine_id] = (acc.byEngine[a.engine_id] ?? 0) + 1;
       acc.byQuestion[a.question_id] = (acc.byQuestion[a.question_id] ?? 0) + 1;
       acc.positions.push(i + 1);
@@ -159,6 +162,7 @@ export function aggregate(answers: AnswerForAggregation[], dest: Destination): A
     if (acc.badLocations.size) flags.push(`location differs: ${[...acc.badLocations].join(" / ")}`);
     else if (acc.nullLocations === mentions) flags.push("location never stated");
     if (acc.anySourcesSeen && !acc.supported) flags.push("name not found in any source");
+    for (const d of acc.duplicateOf) flags.push(`analyzer: possible duplicate of "${d}"`);
     const toks = key.split(" ");
     for (const other of keys) {
       if (other === key) continue;
@@ -166,7 +170,7 @@ export function aggregate(answers: AnswerForAggregation[], dest: Destination): A
       if (isSubName(toks, ot) || isSubName(ot, toks)) flags.push(`maybe same as "${[...accs.get(other)!.names.entries()].sort((x, y) => y[1] - x[1])[0][0]}"`);
     }
     return {
-      key, name: names[0][0], variants: names.map((n) => n[0]), mentions, recommended: acc.recommended,
+      key, name: names[0][0], variants: names.map((n) => n[0]), mentions, recommended: acc.recommended, notRecommended: acc.notRecommended,
       byEngine: acc.byEngine, byQuestion: acc.byQuestion,
       avgPosition: acc.positions.reduce((s, p) => s + p, 0) / acc.positions.length,
       booking: acc.booking, locations: [...acc.locations], flags,

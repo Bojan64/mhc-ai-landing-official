@@ -17,15 +17,19 @@ Rules:
 - List every accommodation (hotel, guesthouse, apartment, hostel, camp, resort) that the answer names, in order of FIRST mention. Each accommodation once. Do not list restaurants, attractions, towns, lakes or booking sites as accommodations.
 - name: exactly as written in the answer (no translation, no added words).
 - lodging_type: what the answer calls it; "hotel" if unclear.
-- recommended: true if the answer offers it as an option for the guest to consider; false if it is only named as a warning, a contrast, or something to avoid.
 - location_stated: the place the answer gives for that accommodation (town, area, address part). null if the answer does not say.
-- booking_target: where the answer sends the guest to book THIS accommodation:
-  "hotel_site" = a link or instruction to the accommodation's own website;
-  "ota" = a link or instruction to an online travel agency or booking platform (e.g. Booking.com, Expedia), including a text-only tip like "book on Booking.com";
-  "other_link" = some other link attached to it (review site, tourism board, map);
-  "none" = no booking pointer for it.
-  The link list tells you which domains are known OTAs, metasearch, review or tourism-board sites; any other domain is "other". Use it, but decide from the answer text which accommodation a link belongs to. A link on a domain that clearly belongs to the accommodation itself counts as "hotel_site".
-- booking_evidence: the URL or the exact words that show booking_target; null when booking_target is "none".
+- sentiment: "recommended" if the answer offers it as an option for the guest to consider; "not_recommended" if it is named only as a warning, a contrast, something closed or unavailable, or something to avoid; "neutral" if it is only mentioned without a clear recommendation either way.
+- sentiment_quote: an exact quote of AT MOST 25 words from the answer on which the sentiment is based. Copy the words exactly; never paraphrase.
+- booking_target: decide ONLY from an explicit instruction in the answer about where the guest should book THIS accommodation:
+  "direct" = book on the accommodation's own website, or by phoning or e-mailing it;
+  "ota" = an online travel agency or booking platform is named as the place to book it (e.g. "book it on Booking.com");
+  "portal" = a tourism portal or tourist board is named as the place to book or enquire (e.g. bled.si);
+  "unspecified" = the answer gives no such instruction for it.
+  These do NOT count as booking instructions and give "unspecified": a score, rating or review taken from Booking.com, Tripadvisor or another site; a link to the accommodation's own website that is only there as a source or for information; general advice that is not about this accommodation ("compare prices on Booking.com and the hotel's site"). The link list shows the type of each domain; use it only to name the kind of site, not to infer an instruction.
+- booking_evidence: the exact words of the instruction that show booking_target; null when booking_target is "unspecified".
+- cited_sources: the sites or sources the answer cites for this accommodation (e.g. "Booking.com", "Tripadvisor", "bled.si"), as short names. Empty list if none. A cited source is not a booking instruction.
+- linked_urls: every URL the answer attaches to this accommodation, exactly as written, whatever its role (own site, tourism board, review page). Empty list if none.
+- possible_duplicate_of: if the name looks like another accommodation listed in the same answer (similar words, a variant spelling, one name contained in the other), put that other name exactly as written; otherwise null. Only flag the resemblance; never merge or drop entries, and do not decide whether they are really the same place, even if the answer says they are separate.
 - quote: a short exact quote (at most 200 characters) from the answer where the accommodation is first mentioned.
 - If the answer names no accommodation (refusal, general advice only), return an empty hotels list and say why in no_hotels_reason; otherwise no_hotels_reason is null.
 Always answer by calling the ${TOOL_NAME} tool.`;

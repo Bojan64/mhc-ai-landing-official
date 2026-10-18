@@ -8,11 +8,11 @@ import type { EngineResult } from "../src/engines/types";
 import { aggregate, classifyUrl, extractUrls, nameKey, type AnswerForAggregation } from "../src/destination/aggregate";
 import { ANALYZER_SYSTEM_PROMPT, buildAnalyzerUserMessage, type AnalyzeFn } from "../src/destination/analyzer";
 import { loadDestinationConfig, type DestinationConfig } from "../src/destination/config";
-import { destJobCounts, openDestDb, savePlannedDestRun, selectDestAnswers } from "../src/destination/db";
+import { destJobCounts, openDestDb, saveDestAnalysis, savePlannedDestRun, selectDestAnswers } from "../src/destination/db";
 import { buildDestinationJobs, checkDestinationBudget, estimateDestinationCost } from "../src/destination/plan";
 import { buildReport, renderHeader, renderHotelTable, renderMarkdown } from "../src/destination/report";
 import { executeDestinationRun, DestRunRefused } from "../src/destination/run";
-import { AnalysisSchema, type Analysis, type Destination } from "../src/destination/schemas";
+import { AnalysisSchema, parseStoredAnalysis, type Analysis, type Destination } from "../src/destination/schemas";
 import { CONFIG_DIR } from "./helpers";
 
 const quiet = { log: () => {}, retry: { sleep: async () => {}, maxAttempts: 2 } };
@@ -47,8 +47,9 @@ function pricedConfig(): DestinationConfig {
 
 const hotelsIn = (names: string[], overrides: Partial<Analysis["hotels"][number]> = {}): Analysis => ({
   hotels: names.map((name) => ({
-    name, lodging_type: "hotel" as const, recommended: true, location_stated: "Bled", booking_target: "none" as const,
-    booking_evidence: null, quote: name, ...overrides,
+    name, lodging_type: "hotel" as const, location_stated: "Bled", sentiment: "recommended" as const, sentiment_quote: `try ${name}`,
+    booking_target: "unspecified" as const, booking_evidence: null, cited_sources: [] as string[], linked_urls: [] as string[],
+    possible_duplicate_of: null, quote: name, ...overrides,
   })),
   no_hotels_reason: null,
 });
@@ -198,6 +199,30 @@ describe("links, names and aggregation", () => {
     expect(noLoc.hotels[0].flags).toContain("location never stated");
   });
 
+  it("shows the analyzer's possible-duplicate mark as a manual check and does not merge the hotels", () => {
+    const agg = aggregate([
+      ans(1, "openai", ["Penzion Berc", "Garni Hotel Berc"], {}, {}),
+    ], BLED);
+    expect(agg.hotels).toHaveLength(2);
+    const flagged = aggregate([{
+      ...ans(1, "openai", ["Penzion Berc", "Garni Hotel Berc"]),
+      analysis: { ...hotelsIn(["Penzion Berc", "Garni Hotel Berc"]), hotels: hotelsIn(["Penzion Berc", "Garni Hotel Berc"]).hotels.map((h, i) => (i === 1 ? { ...h, possible_duplicate_of: "Penzion Berc" } : h)) },
+    }], BLED);
+    expect(flagged.hotels).toHaveLength(2);
+    expect(flagged.hotels.find((h) => h.name === "Garni Hotel Berc")!.flags).toContain('analyzer: possible duplicate of "Penzion Berc"');
+  });
+
+  it("counts recommended and not recommended answers and the new booking targets", () => {
+    const agg = aggregate([
+      ans(1, "openai", ["Hotel A"], {}, { sentiment: "not_recommended", booking_target: "direct" }),
+      ans(2, "gemini", ["Hotel A"], {}, { sentiment: "recommended", booking_target: "ota" }),
+      ans(3, "gemini", ["Hotel A"], {}, { sentiment: "neutral", booking_target: "portal" }),
+    ], BLED);
+    const a = agg.hotels[0];
+    expect([a.recommended, a.notRecommended]).toEqual([1, 1]);
+    expect(a.booking).toEqual({ direct: 1, ota: 1, portal: 1, unspecified: 0 });
+  });
+
   it("flags names missing from the sources, and possible duplicates", () => {
     const withSrc = (job: number, eng: string, names: string[], text: string) => ans(job, eng, names, { sourceText: text, hasSources: true });
     const agg = aggregate([
@@ -227,9 +252,44 @@ describe("analyzer prompt and schema", () => {
   it("schema is a strict object that can become a JSON tool schema", () => {
     const js = z.toJSONSchema(AnalysisSchema) as any;
     expect(js.type).toBe("object");
-    expect(js.properties.hotels.items.properties.booking_target.enum).toEqual(["hotel_site", "ota", "other_link", "none"]);
+    const props = js.properties.hotels.items.properties;
+    expect(props.booking_target.enum).toEqual(["direct", "ota", "portal", "unspecified"]);
+    expect(props.sentiment.enum).toEqual(["recommended", "neutral", "not_recommended"]);
+    expect(Object.keys(props)).toEqual(expect.arrayContaining(["cited_sources", "linked_urls", "possible_duplicate_of", "sentiment_quote"]));
     expect(AnalysisSchema.safeParse(hotelsIn(["A"])).success).toBe(true);
     expect(AnalysisSchema.safeParse({ hotels: [{ name: "A" }], no_hotels_reason: null }).success).toBe(false);
+  });
+
+  it("limits the sentiment quote to 25 words", () => {
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
+    expect(AnalysisSchema.safeParse(hotelsIn(["A"], { sentiment_quote: words(25) })).success).toBe(true);
+    expect(AnalysisSchema.safeParse(hotelsIn(["A"], { sentiment_quote: words(26) })).success).toBe(false);
+  });
+
+  it("tells the analyzer that only an explicit instruction is a booking pointer, and to flag duplicates without merging", () => {
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("ONLY from an explicit instruction");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("a score, rating or review taken from Booking.com, Tripadvisor");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("link to the accommodation's own website that is only there as a source");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("never merge or drop entries");
+    expect(ANALYZER_SYSTEM_PROMPT).toContain("AT MOST 25 words");
+  });
+
+  it("still reads analyses stored by the first analyzer version, without guessing their booking data", () => {
+    const old = JSON.stringify({
+      hotels: [
+        { name: "A", lodging_type: "hotel", recommended: false, location_stated: "Bled", booking_target: "ota", booking_evidence: "Booking.com score 9", quote: "A" },
+        { name: "B", lodging_type: "hotel", recommended: true, location_stated: null, booking_target: "hotel_site", booking_evidence: "https://b.si", quote: "B" },
+      ],
+      no_hotels_reason: null,
+    });
+    const r = parseStoredAnalysis(old)!;
+    expect(r.legacy).toBe(true);
+    expect(r.analysis.hotels.map((h) => [h.sentiment, h.booking_target])).toEqual([["not_recommended", "unspecified"], ["recommended", "unspecified"]]);
+    expect(r.analysis.hotels[1].linked_urls).toEqual(["https://b.si"]);
+    const fresh = parseStoredAnalysis(JSON.stringify(hotelsIn(["A"])))!;
+    expect(fresh.legacy).toBe(false);
+    expect(parseStoredAnalysis("{}")).toBeNull();
+    expect(parseStoredAnalysis("not json")).toBeNull();
   });
 });
 
@@ -362,5 +422,20 @@ describe("run (fake engines and analyzer, no real API calls)", () => {
     expect(md).toContain("openai: Where should I stay in Bled?");
     expect(md).toContain("Actual = tokens and searches reported by each provider");
     expect(rep.cost.actualUsd).toBeGreaterThan(0);
+    expect(md).toContain('recommended ("try Hotel Alpha")');
+    expect(md).toContain("book dir/ota/portal/unspec");
+    expect(rep.legacyAnalyses).toBe(0);
+  });
+
+  it("warns in the report when an answer still has a first-version analysis", async () => {
+    const c = pricedConfig();
+    const { db } = setupRun(c, 1);
+    await executeDestinationRun(db, c, "r", BLED, { budgetEur: 20, adapterFactory: fake().factory, analyzerFactory: () => fakeAnalyzer().fn, ...quiet });
+    const old = JSON.stringify({ hotels: [{ name: "Old", lodging_type: "hotel", recommended: true, location_stated: "Bled", booking_target: "ota", booking_evidence: "x", quote: "Old" }], no_hotels_reason: null });
+    const jobId = (db.prepare("SELECT job_id FROM dest_jobs ORDER BY job_id LIMIT 1").get() as { job_id: number }).job_id;
+    saveDestAnalysis(db, jobId, { analyzer_model: "old", analysis_json: old, raw_output: old, schema_valid: true, error: null, input_tokens: 1, output_tokens: 1, cost_estimate: 0 });
+    const rep = buildReport(db, c, "r");
+    expect(rep.legacyAnalyses).toBe(1);
+    expect(renderHeader(rep)).toContain("first analyzer version");
   });
 });
