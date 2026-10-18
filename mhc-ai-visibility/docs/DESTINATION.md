@@ -55,6 +55,20 @@ For every hotel with status `closed` (and for answers given before `valid_until`
 That last count is a text heuristic (a line that names the hotel or an alias together with a closure word such as
 "closed", "reopening", "renovation"; "renovated" does not count), so the matching lines are printed for a check by eye.
 
+## Name unification and manual corrections
+`config/destination-aliases.json` (optional, confirmed by the owner, dated) tells the report which spellings are one accommodation:
+- `groups`: a canonical name and its aliases. Matching ignores case, accents, punctuation and the words hotel / the / and.
+- `exclusions`: names that are no accommodation (a spa, a hotel group); they are left out of every count.
+- `overrides`: a manual correction of one extracted value (today only `sentiment`) in ONE answer (run, engine, question, repetition), with the reason.
+  An override that no longer matches is listed in the report as "NOT applied", never silently ignored.
+- `keep_separate`: look-alike names the owner decided are different places (documentation; the file is rejected if such a pair is also merged).
+The unification is applied only when the report is built. The stored answers and analyses are never changed, and "Extracted by analyzer" in the
+verbatim answers still shows what the analyzer wrote. The report uses the unified names for the hotel table, the most-recommended list
+(recommended / named, counted once per answer), the stability table (hotels named in all, two or one of the repetitions) and the closed-hotel section.
+
+The closed-hotel section also shows "named WITHOUT closure warning" per engine: mentions of the hotel in answers with no closure wording at all
+(a planned or past renovation alone is not a warning).
+
 ## Analyzer configuration
 Destination mode reads ONLY `destination_analyzer` in `config/destination.json` (model, `temperature`, rate limits, prices, token assumptions).
 `temperature: null` means the parameter is not sent at all: Sonnet 5.5 rejects it ("`temperature` is deprecated for this model").

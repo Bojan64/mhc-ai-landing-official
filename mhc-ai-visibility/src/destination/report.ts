@@ -4,7 +4,9 @@ import type { SourceRef } from "../engines/types";
 import { table } from "../util/table";
 import { aggregate, type Aggregation, type AnswerForAggregation, type HotelRow } from "./aggregate";
 import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs, selectNewestInvalid } from "./db";
+import { newAliasSummary, resolveAnalysis, type AliasSummary } from "./aliases";
 import { auditClosedHotels, type ClosedAudit } from "./facts";
+import { stability, topHotels, type EngineStability, type TopList } from "./stability";
 import { estimateDestinationCost } from "./plan";
 import { parseStoredAnalysis, type Analysis, type Destination } from "./schemas";
 
@@ -14,7 +16,13 @@ export interface ReportData {
   repetitions: number;
   status: string;
   answers: DestAnswerRow[];
+  /** Analyses as the analyzer extracted them. */
   analyses: Map<number, Analysis>;
+  /** The same after the confirmed name unification and manual overrides (config/destination-aliases.json): used for counts. */
+  resolved: Map<number, Analysis>;
+  aliasSummary: AliasSummary;
+  stability: EngineStability[];
+  top: TopList[];
   invalidAnalyses: number;
   /** Answers whose newest analysis is from an older analyzer version (booking and sentiment fields are not comparable). */
   olderAnalyses: number;
@@ -91,6 +99,8 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
   const answers = selectDestAnswers(db, runId);
 
   const analyses = new Map<number, Analysis>();
+  const resolved = new Map<number, Analysis>();
+  const aliasSummary = newAliasSummary();
   let invalid = 0;
   let legacy = 0;
   const forAgg: AnswerForAggregation[] = [];
@@ -100,10 +110,12 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     if (!parsed) { invalid++; continue; }
     if (parsed.legacy) legacy++;
     analyses.set(a.job.job_id, parsed.analysis);
+    const res = resolveAnalysis(parsed.analysis, { run: runId, engine_id: a.job.engine_id, question_id: a.job.question_id, repetition: a.job.repetition }, cfg.aliases, aliasSummary);
+    resolved.set(a.job.job_id, res);
     const srcs = sourcesOf(cfg, a);
     forAgg.push({
       job_id: a.job.job_id, engine_id: a.job.engine_id, question_id: a.job.question_id, repetition: a.job.repetition,
-      analysis: parsed.analysis,
+      analysis: res,
       sourceText: srcs.map((s) => `${s.title ?? ""} ${s.url} ${s.domain ?? ""}`).join(" ").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase(),
       hasSources: srcs.length > 0,
     });
@@ -135,7 +147,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, analyses, cfg.facts), demoted: demotedBookings(answers, analyses), analysisStats: statsOf(db, runId, analyses), engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, resolved, aliasSummary, stability: stability(answers, resolved), top: topHotels(answers, resolved), invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, resolved, cfg.facts), demoted: demotedBookings(answers, analyses), analysisStats: statsOf(db, runId, analyses), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -202,8 +214,8 @@ export function renderClosedHotels(r: ReportData): string {
       "",
       `${f.name} — CLOSED${f.valid_until ? ` until ${f.valid_until}` : ""} (checked ${f.checked_on}; source: ${f.source})`,
       table([
-        ["engine", "answers", "names the hotel", "recommended", "neutral", "not recommended", "engine itself says it is closed"],
-        ...c.rows.map((x) => [x.engine_id, x.answers, x.mentioning, x.recommended, x.neutral, x.notRecommended, `${x.closureMentioned} of ${x.mentioning}`]),
+        ["engine", "answers", "names the hotel", "recommended", "neutral", "not recommended", "engine itself says it is closed", "named WITHOUT closure warning"],
+        ...c.rows.map((x) => [x.engine_id, x.answers, x.mentioning, x.recommended, x.neutral, x.notRecommended, `${x.closureMentioned} of ${x.mentioning}`, `${x.namedWithoutWarning} of ${x.mentioning}`]),
       ]),
       "",
       "Recommended or neutral although the hotel is closed (sentiment_quote = the words the sentiment rests on):",
@@ -215,6 +227,44 @@ export function renderClosedHotels(r: ReportData): string {
     const said = c.items.filter((i) => i.closureLine);
     if (!said.length) out.push("  (none)");
     for (const i of said) out.push(`  ${i.engine_id} ${i.question_id} (${i.sentiment}): "${clipLine(i.closureLine!, 260)}"`);
+  }
+  return out.join("\n");
+}
+
+export function renderAliases(r: ReportData): string {
+  const a = r.aliasSummary;
+  const renamed = Object.entries(a.renamed);
+  const excluded = Object.entries(a.excluded);
+  const lines = ["NAME UNIFICATION (config/destination-aliases.json; confirmed by the owner; the stored answers and analyses are unchanged)"];
+  if (!renamed.length && !excluded.length && !a.applied.length && !a.notApplied.length) return `${lines[0]}\n(nothing applied)`;
+  lines.push(`spellings renamed to a canonical name: ${renamed.reduce((s, [, n]) => s + n, 0)} mention(s) — ${renamed.map(([k, n]) => `${k} ×${n}`).join(", ") || "none"}`);
+  lines.push(`repeated spellings of one hotel inside one answer, folded into the first: ${a.mergedInAnswer}`);
+  lines.push(`left out (not an accommodation): ${excluded.map(([k, n]) => `${k} ×${n}`).join(", ") || "none"}`);
+  lines.push(`manual corrections applied: ${a.applied.length}`);
+  for (const o of a.applied) lines.push(`  ${o.run} ${o.engine_id} ${o.question_id} rep ${o.repetition} · ${o.hotel}: sentiment ${o.from} → ${o.to} — ${o.reason}`);
+  for (const m of a.notApplied) lines.push(`  ⚠ NOT applied: ${m}`);
+  return lines.join("\n");
+}
+
+export function renderStability(r: ReportData): string {
+  const head = "STABILITY ACROSS REPETITIONS (after name unification; hotels named in every repetition vs in only one)";
+  if (r.repetitions < 2) return `${head}\n(only one repetition: nothing to compare)`;
+  const out = [head];
+  for (const e of r.stability) {
+    out.push("", `${e.engine_id}: in all repetitions ${e.totalInAll} · in two ${e.totalTwice} · in only one ${e.totalOnce}`);
+    out.push(table([
+      ["question", "reps", "all different hotels", "in all reps", "in 2 reps", "in 1 rep only", "named in all reps"],
+      ...e.rows.map((x) => [x.question_id, x.reps, x.union, x.inAll.length, x.twice, x.once, x.inAll.join("; ") || "—"]),
+    ]));
+  }
+  return out.join("\n");
+}
+
+export function renderTop(r: ReportData): string {
+  const out = ["MOST RECOMMENDED HOTELS (after name unification; recommended / named, counted once per answer)"];
+  for (const t of r.top) {
+    out.push("", `${t.scope === "all" ? "All engines" : t.scope} (${t.answers} answers)`);
+    out.push(table([["#", "hotel", "recommended", "named"], ...t.rows.map((x, i) => [i + 1, x.name, x.recommended, x.mentions])]));
   }
   return out.join("\n");
 }
@@ -282,7 +332,7 @@ export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswer
 
 /** Terminal report: header, table, checks, cost, a few examples of answer vs extraction. */
 export function renderTerminal(r: ReportData, o: { examples: number; maxChars: number }): string {
-  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderClosedHotels(r), "", renderDemoted(r), "", renderAnalysisStats(r), "", "COST (estimate vs actual)", renderCost(r)];
+  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderAliases(r), "", renderTop(r), "", renderStability(r), "", renderClosedHotels(r), "", renderDemoted(r), "", renderAnalysisStats(r), "", "COST (estimate vs actual)", renderCost(r)];
   if (o.examples > 0) {
     // spread the examples over different engines
     const pick: DestAnswerRow[] = [];
@@ -303,6 +353,9 @@ export function renderMarkdown(r: ReportData): string {
     "", fence(renderHeader(r)),
     "", "## Hotels by number of mentions", fence(renderHotelTable(r)),
     "", "## Manual check", fence(renderChecks(r)),
+    "", "## Name unification", fence(renderAliases(r)),
+    "", "## Most recommended hotels", fence(renderTop(r)),
+    "", "## Stability across repetitions", fence(renderStability(r)),
     "", "## Priporočila nedosegljivih hotelov (recommendations of unavailable hotels)", fence(renderClosedHotels(r)),
     "", "## Booking pointers demoted by the code", fence(renderDemoted(r)),
     "", "## Analysis quality", fence(renderAnalysisStats(r)),

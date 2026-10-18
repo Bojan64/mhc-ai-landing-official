@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { z } from "zod";
 import { EnginesFileSchema, SourceDomainsSchema, type EnginesConfig, type SourceDomains } from "../config/schemas";
-import { DestinationFileSchema, FactsFileSchema, PLACEHOLDER, type DestinationFile, type HotelFact } from "./schemas";
+import { checkAliases, EMPTY_ALIASES } from "./aliases";
+import { AliasesFileSchema, DestinationFileSchema, FactsFileSchema, PLACEHOLDER, type AliasesFile, type DestinationFile, type HotelFact } from "./schemas";
 
 export interface DestinationConfig {
   destination: DestinationFile;
@@ -11,6 +12,8 @@ export interface DestinationConfig {
   sourceDomains: SourceDomains;
   /** Hand-checked facts about hotels (destination-facts.json); empty when the file does not exist. */
   facts: HotelFact[];
+  /** Name unification confirmed by the owner (destination-aliases.json); empty when the file does not exist. */
+  aliases: AliasesFile;
   hash: string;
 }
 
@@ -56,11 +59,13 @@ export function loadDestinationConfig(configDir: string): DestinationConfigResul
   const engines = read("engines.json", EnginesFileSchema);
   const sourceDomains = read("source-domains.json", SourceDomainsSchema);
   const facts = existsSync(join(configDir, "destination-facts.json")) ? read("destination-facts.json", FactsFileSchema) : { facts: [] };
-  if (!destination || !engines || !sourceDomains || !facts) return { config: null, errors, warnings: [] };
+  const aliases = existsSync(join(configDir, "destination-aliases.json")) ? read("destination-aliases.json", AliasesFileSchema) : EMPTY_ALIASES;
+  if (!destination || !engines || !sourceDomains || !facts || !aliases) return { config: null, errors, warnings: [] };
+  errors.push(...checkAliases(aliases));
 
   const cross = crossCheckDestination(destination, engines);
   errors.push(...cross.errors);
-  const config = { destination, engines, sourceDomains, facts: facts.facts, hash: hash.digest("hex") };
+  const config = { destination, engines, sourceDomains, facts: facts.facts, aliases, hash: hash.digest("hex") };
   return { config: errors.length ? null : config, errors, warnings: cross.warnings };
 }
 

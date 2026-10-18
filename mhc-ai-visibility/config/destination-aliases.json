@@ -1,0 +1,41 @@
+{
+  "_note": "Name unification confirmed by the owner on 2026-10-18 after reviewing the candidate list from runs bled-trial-01 and bled-full-01. Used only by the report: the stored answers and analyses are never changed. groups: spellings counted as one accommodation. exclusions: names that are no accommodation (left out of the counts). overrides: manual corrections of one extracted value in one answer, with the reason. keep_separate: look-alike names the owner decided are different places (documentation; never merged). The combined entry 'Penzion Berc / Garni Hotel Berc' (Anthropic D1, one mention) is deliberately not mapped. Matching ignores case, accents, punctuation and the words 'hotel', 'the', 'and'.",
+  "groups": [
+    { "canonical": "Hotel Park", "aliases": ["Hotel Park (Sava Hotels & Resorts)", "Hotel Park (Sava Hotels)", "Hotel Park – Sava"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Hotel Triglav Bled", "aliases": ["Triglav Bled", "Hotel Triglav"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Aparthotel Gaja", "aliases": ["Gaja (aparthotel)"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Adora Luxury Hotel", "aliases": ["Adora", "Adora Luxury Hotel (ex Vila Istra)", "Villa Adora", "Villa Adora / Adora Luxury Hotel"], "note": "'ex Vila Istra' is the former name", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Villa Preseren", "aliases": ["Hotel Villa Preseren", "Penzion Vila Prešeren"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Ribno Alpine Resort", "aliases": ["Ribno Alpine Hotel", "Hotel Ribno", "Ribno Alpine Glamping"], "note": "owner decision: the glamping units count as the same property", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Vila Bled", "aliases": ["Hotel Vila Bled", "Villa Bled (Vila Bled)"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Hotel Starkl", "aliases": ["Hotel Starkl – Heritage & Unique", "Hotel Starkl Heritage & Unique"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Garden Village Bled", "aliases": ["Garden Village"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Hotel Astoria Bled", "aliases": ["Hotel Astoria"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Hotel Kompas", "aliases": ["Hotel Kompas Bled"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Rikli Balance Hotel", "aliases": ["Rikli Balance"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Hotel Savica Garni", "aliases": ["Garni Hotel Savica", "Savica Garni"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Penzion Pibernik", "aliases": ["Penzion Pibernik (Pension & Glamping Pibernik)"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Ana Apart Villa & Rooms", "aliases": ["Ana Apart Villa & Rooms Bled"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Penzion Pr' Anzl", "aliases": ["Pr Anzl"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "AMS Beagle", "aliases": ["ECO Boutique Hotel AMS Beagle"], "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "canonical": "Penzion Berc", "aliases": ["Berc pension"], "note": "Anthropic D5: 'the older Berc pension across the street'; NOT Garni Hotel Berc", "confirmed_by": "owner", "confirmed_on": "2026-10-18" }
+  ],
+  "exclusions": [
+    { "name": "Wellness Essense", "kind": "not_lodging", "reason": "a small independent spa (massages), not an accommodation; analyzer mistake", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "name": "Sava Hotels Bled", "kind": "group", "reason": "a hotel group, not an accommodation; named in Anthropic D6 repetition 1 as the heading of a list of its hotels", "confirmed_by": "owner", "confirmed_on": "2026-10-18" }
+  ],
+  "overrides": [
+    {
+      "run": "bled-full-01", "engine_id": "anthropic", "question_id": "D6", "repetition": 1, "hotel": "Grand Hotel Toplice",
+      "field": "sentiment", "from": "recommended", "to": "neutral",
+      "reason": "Toplice is named only inside the list under the group 'Sava Hotels Bled' (quote 'These are larger lakeside hotels.'), not recommended individually; counts as neutral",
+      "confirmed_by": "owner", "confirmed_on": "2026-10-18"
+    }
+  ],
+  "keep_separate": [
+    { "names": ["Garni Hotel Berc", "Penzion Berc"], "reason": "OpenAI D5: 'a separate property despite the similar name'; Anthropic D5: the family also runs the older Berc pension across the street", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "names": ["Vila Alpina", "Alp Penzion"], "reason": "described separately, with separate ratings, in Anthropic D7", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "names": ["Lake Bled House", "Lake House Sebanc"], "reason": "described separately in Anthropic D7", "confirmed_by": "owner", "confirmed_on": "2026-10-18" },
+    { "names": ["Penzion Kaps", "Apartments Kaps"], "reason": "owner decision: kept separate", "confirmed_by": "owner", "confirmed_on": "2026-10-18" }
+  ]
+}

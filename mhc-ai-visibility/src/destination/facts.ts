@@ -3,10 +3,10 @@ import type { DestAnswerRow } from "./db";
 import type { Analysis, HotelFact } from "./schemas";
 
 /**
- * Words that show an answer itself says a hotel is not available. Heuristic: "renovation" but not "renovated",
- * so a hotel that was merely renovated years ago is not counted. The matching line is printed in the report to be checked by eye.
+ * Words that show an answer itself says a hotel is not available. Heuristic: only closure wording counts ("closed", "reopening",
+ * "undergoing renovation"); a planned or past renovation or refurbishment alone ("a refurbishment was planned", "renovated in 2016") does not. The matching line is printed in the report to be checked by eye.
  */
-const CLOSURE_RE = /\b(closed|closure|closes|closing|reopen\w*|re-open\w*|under (?:construction|renovation|refurbishment)|undergoing (?:renovation|refurbishment|works)|renovation|refurbishment|not (?:currently )?(?:open|operating))\b/i;
+const CLOSURE_RE = /\b(closed|closure|closes|closing|reopen\w*|re-open\w*|under (?:construction|renovation|refurbishment)|undergoing (?:renovation|refurbishment|works)|not (?:currently )?(?:open|operating))\b/i;
 
 const plain = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
@@ -29,6 +29,8 @@ export interface ClosedEngineRow {
   neutral: number;
   notRecommended: number;
   closureMentioned: number;
+  /** Mentions of the hotel in answers that contain no closure warning at all. */
+  namedWithoutWarning: number;
 }
 
 export interface ClosedAudit {
@@ -61,7 +63,7 @@ export function auditClosedHotels(answers: DestAnswerRow[], analyses: Map<number
   return facts.filter((f) => f.status === "closed").map((fact) => {
     const keys = new Set([fact.name, ...fact.aliases].map(nameKey));
     const rows = new Map<string, ClosedEngineRow>(engines.map((e) => [e, {
-      engine_id: e, answers: 0, mentioning: 0, recommended: 0, neutral: 0, notRecommended: 0, closureMentioned: 0,
+      engine_id: e, answers: 0, mentioning: 0, recommended: 0, neutral: 0, notRecommended: 0, closureMentioned: 0, namedWithoutWarning: 0,
     }]));
     const items: ClosedItem[] = [];
     for (const a of answers) {
@@ -76,6 +78,7 @@ export function auditClosedHotels(answers: DestAnswerRow[], analyses: Map<number
       else row.notRecommended++;
       const closureLine = findClosureLine(a.raw_answer, fact);
       if (closureLine) row.closureMentioned++;
+      else row.namedWithoutWarning++;
       items.push({
         engine_id: a.job.engine_id, question_id: a.job.question_id, repetition: a.job.repetition,
         sentiment: hotel.sentiment, quote: hotel.sentiment_quote, closureLine,

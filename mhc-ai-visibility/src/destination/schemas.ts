@@ -207,3 +207,51 @@ export const HotelFactSchema = z.strictObject({
 export type HotelFact = z.infer<typeof HotelFactSchema>;
 
 export const FactsFileSchema = z.strictObject({ ...note, facts: z.array(HotelFactSchema) });
+
+// ---- confirmed name unification (config/destination-aliases.json) ----
+
+const Confirmed = { confirmed_by: z.string().min(1), confirmed_on: IsoDate };
+
+/** Several spellings of one accommodation, confirmed by the owner. The report counts them as one. */
+export const AliasGroupSchema = z.strictObject({
+  canonical: z.string().min(1),
+  aliases: z.array(z.string().min(1)).min(1),
+  note: z.string().optional(),
+  ...Confirmed,
+});
+export type AliasGroup = z.infer<typeof AliasGroupSchema>;
+
+/** A name that is not an accommodation (a spa, a hotel group); it is left out of the report's counts. */
+export const ExclusionSchema = z.strictObject({
+  name: z.string().min(1),
+  kind: z.enum(["not_lodging", "group"]),
+  reason: z.string().min(1),
+  ...Confirmed,
+});
+
+/** A manual correction of one extracted value in one answer, with the reason. The stored analysis is not changed. */
+export const OverrideSchema = z.strictObject({
+  run: z.string().min(1),
+  engine_id: z.string().min(1),
+  question_id: z.string().min(1),
+  repetition: z.number().int().min(1),
+  hotel: z.string().min(1),
+  field: z.literal("sentiment"),
+  from: z.enum(SENTIMENTS),
+  to: z.enum(SENTIMENTS),
+  reason: z.string().min(1),
+  ...Confirmed,
+});
+export type Override = z.infer<typeof OverrideSchema>;
+
+/** Names the owner decided are DIFFERENT accommodations although they look alike. Documentation; never merged. */
+export const KeepSeparateSchema = z.strictObject({ names: z.array(z.string().min(1)).min(2), reason: z.string().min(1), ...Confirmed });
+
+export const AliasesFileSchema = z.strictObject({
+  ...note,
+  groups: z.array(AliasGroupSchema),
+  exclusions: z.array(ExclusionSchema),
+  overrides: z.array(OverrideSchema),
+  keep_separate: z.array(KeepSeparateSchema),
+});
+export type AliasesFile = z.infer<typeof AliasesFileSchema>;
