@@ -69,6 +69,19 @@ verbatim answers still shows what the analyzer wrote. The report uses the unifie
 The closed-hotel section also shows "named WITHOUT closure warning" per engine: mentions of the hotel in answers with no closure wording at all
 (a planned or past renovation alone is not a warning).
 
+## Sources ("Viri")
+The report has a section on the web sources the engines cited or retrieved.
+- **Two kinds of number.** OpenAI returns citations tied to a passage of the answer ("cited"). Claude's search returns the results it looked at ("retrieved");
+  its answers of the Bled runs contain no passage-level citations, and the page contents are encrypted, so only titles and addresses can be read.
+  Counts of the two engines are therefore not the same kind of number.
+- **Groups** come from `config/source-categories.json` (official hotel site, tourism portal, OTA and price comparison, reviews, guides and articles).
+  A domain not listed there goes to "drugo" (other) and is printed in the report so it can be placed. The first version was written from domain names and page titles, not checked site by site.
+- **Linking a source to a hotel** uses only three signals and never guesses: the source's title/URL names exactly one hotel of the answer; (OpenAI only)
+  the line of the answer holding the cited passage names exactly one hotel; or the heading above that line does. Anything else is counted as "ambiguous" or "not linkable".
+  Claude's results can only be linked by title/URL.
+- **Closed hotels**: for every hotel with status `closed` the report lists, per mention, the linked sources, whether the engine itself warned about the closure and,
+  for OpenAI, which source the closure sentence cites.
+
 ## Analyzer configuration
 Destination mode reads ONLY `destination_analyzer` in `config/destination.json` (model, `temperature`, rate limits, prices, token assumptions).
 `temperature: null` means the parameter is not sent at all: Sonnet 5.5 rejects it ("`temperature` is deprecated for this model").

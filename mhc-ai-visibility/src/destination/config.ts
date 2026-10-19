@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { z } from "zod";
 import { EnginesFileSchema, SourceDomainsSchema, type EnginesConfig, type SourceDomains } from "../config/schemas";
 import { checkAliases, EMPTY_ALIASES } from "./aliases";
-import { AliasesFileSchema, DestinationFileSchema, FactsFileSchema, PLACEHOLDER, type AliasesFile, type DestinationFile, type HotelFact } from "./schemas";
+import { AliasesFileSchema, SourceCategoriesFileSchema, DestinationFileSchema, FactsFileSchema, PLACEHOLDER, type AliasesFile, type DestinationFile, type HotelFact, type SourceCategory } from "./schemas";
 
 export interface DestinationConfig {
   destination: DestinationFile;
@@ -14,6 +14,8 @@ export interface DestinationConfig {
   facts: HotelFact[];
   /** Name unification confirmed by the owner (destination-aliases.json); empty when the file does not exist. */
   aliases: AliasesFile;
+  /** Grouping of source domains for the report (source-categories.json); empty when the file does not exist. */
+  sourceCategories: SourceCategory[];
   hash: string;
 }
 
@@ -60,12 +62,24 @@ export function loadDestinationConfig(configDir: string): DestinationConfigResul
   const sourceDomains = read("source-domains.json", SourceDomainsSchema);
   const facts = existsSync(join(configDir, "destination-facts.json")) ? read("destination-facts.json", FactsFileSchema) : { facts: [] };
   const aliases = existsSync(join(configDir, "destination-aliases.json")) ? read("destination-aliases.json", AliasesFileSchema) : EMPTY_ALIASES;
-  if (!destination || !engines || !sourceDomains || !facts || !aliases) return { config: null, errors, warnings: [] };
+  const cats = existsSync(join(configDir, "source-categories.json")) ? read("source-categories.json", SourceCategoriesFileSchema) : { categories: [] as SourceCategory[] };
+  if (!destination || !engines || !sourceDomains || !facts || !aliases || !cats) return { config: null, errors, warnings: [] };
+  const seenId = new Set<string>();
+  const seenDomain = new Map<string, string>();
+  for (const c of cats.categories) {
+    if (seenId.has(c.id) || c.id === "other") errors.push(`source-categories.json: group id "${c.id}" is duplicated or reserved`);
+    seenId.add(c.id);
+    for (const d of c.domains) {
+      const prev = seenDomain.get(d);
+      if (prev && prev !== c.id) errors.push(`source-categories.json: "${d}" is in two groups ("${prev}" and "${c.id}")`);
+      seenDomain.set(d, c.id);
+    }
+  }
   errors.push(...checkAliases(aliases));
 
   const cross = crossCheckDestination(destination, engines);
   errors.push(...cross.errors);
-  const config = { destination, engines, sourceDomains, facts: facts.facts, aliases, hash: hash.digest("hex") };
+  const config = { destination, engines, sourceDomains, facts: facts.facts, aliases, sourceCategories: cats.categories, hash: hash.digest("hex") };
   return { config: errors.length ? null : config, errors, warnings: cross.warnings };
 }
 

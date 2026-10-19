@@ -255,3 +255,15 @@ export const AliasesFileSchema = z.strictObject({
   keep_separate: z.array(KeepSeparateSchema),
 });
 export type AliasesFile = z.infer<typeof AliasesFileSchema>;
+
+// ---- grouping of cited / retrieved source domains (config/source-categories.json) ----
+
+export const SourceCategorySchema = z.strictObject({
+  id: z.string().regex(/^[a-z_]+$/),
+  label: z.string().min(1),
+  // lower-case domains; a trailing "." means "any ending"; a plain domain also matches its subdomains
+  domains: z.array(z.string().regex(/^[a-z0-9.-]+$/, "lower-case domain without www. or a path")),
+});
+export type SourceCategory = z.infer<typeof SourceCategorySchema>;
+export const SourceCategoriesFileSchema = z.strictObject({ ...note, categories: z.array(SourceCategorySchema).min(1) });
+export type SourceCategoriesFile = z.infer<typeof SourceCategoriesFileSchema>;

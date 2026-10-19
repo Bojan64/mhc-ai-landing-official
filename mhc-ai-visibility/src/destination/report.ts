@@ -6,9 +6,10 @@ import { aggregate, type Aggregation, type AnswerForAggregation, type HotelRow }
 import { destSpentUsd, type DestAnswerRow, type DestDB, getDestRun, destJobCounts, selectDestAnswers, selectDestJobs, selectNewestInvalid } from "./db";
 import { newAliasSummary, resolveAnalysis, type AliasSummary } from "./aliases";
 import { auditClosedHotels, type ClosedAudit } from "./facts";
+import { sourcesOfClosedHotel, sourcesPerHotel, summarizeSources, type EngineSources, type HotelSources, type TopliceEngine, type Unclassified } from "./sources";
 import { stability, topHotels, type EngineStability, type TopList } from "./stability";
 import { estimateDestinationCost } from "./plan";
-import { parseStoredAnalysis, type Analysis, type Destination } from "./schemas";
+import { parseStoredAnalysis, type Analysis, type Destination, type HotelFact } from "./schemas";
 
 export interface ReportData {
   runId: string;
@@ -23,6 +24,13 @@ export interface ReportData {
   aliasSummary: AliasSummary;
   stability: EngineStability[];
   top: TopList[];
+  /** Sources the engines cited or retrieved (section "Viri"). */
+  sources: {
+    engines: EngineSources[];
+    unclassified: Unclassified[];
+    perHotel: HotelSources[];
+    closed: { fact: HotelFact; engines: TopliceEngine[] }[];
+  };
   invalidAnalyses: number;
   /** Answers whose newest analysis is from an older analyzer version (booking and sentiment fields are not comparable). */
   olderAnalyses: number;
@@ -66,6 +74,19 @@ function sourcesOf(cfg: DestinationConfig, a: DestAnswerRow): SourceRef[] {
   } catch {
     return [];
   }
+}
+
+function buildSources(answers: DestAnswerRow[], resolved: Map<number, Analysis>, cfg: DestinationConfig): ReportData["sources"] {
+  const used = new Set(answers.map((a) => a.job.engine_id));
+  const engines = cfg.engines.engines.filter((e) => used.has(e.engine_id)).sort((a, b) => a.engine_id.localeCompare(b.engine_id));
+  const sum = summarizeSources(answers, engines, cfg.sourceCategories);
+  const top = topHotels(answers, resolved)[0]?.rows.map((x) => x.name) ?? [];
+  return {
+    engines: sum.engines,
+    unclassified: sum.unclassified,
+    perHotel: sourcesPerHotel(answers, resolved, engines, top, cfg),
+    closed: cfg.facts.filter((f) => f.status === "closed").map((fact) => ({ fact, engines: sourcesOfClosedHotel(answers, resolved, engines, fact, cfg) })),
+  };
 }
 
 function statsOf(db: DestDB, runId: string, analyses: Map<number, Analysis>): AnalysisStats {
@@ -147,7 +168,7 @@ export function buildReport(db: DestDB, cfg: DestinationConfig, runId: string): 
     rows, estimateUsd: est.knownUsd, actualUsd: destSpentUsd(db, runId), rate: cfg.engines.usd_to_eur,
   };
 
-  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, resolved, aliasSummary, stability: stability(answers, resolved), top: topHotels(answers, resolved), invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, resolved, cfg.facts), demoted: demotedBookings(answers, analyses), analysisStats: statsOf(db, runId, analyses), engineStatus, cost };
+  return { runId, destination: dest, repetitions: run.repetitions, status: run.status, answers, analyses, resolved, aliasSummary, stability: stability(answers, resolved), top: topHotels(answers, resolved), sources: buildSources(answers, resolved, cfg), invalidAnalyses: invalid, olderAnalyses: legacy, agg, closedAudit: auditClosedHotels(answers, resolved, cfg.facts), demoted: demotedBookings(answers, analyses), analysisStats: statsOf(db, runId, analyses), engineStatus, cost };
 }
 
 // ---------------- rendering ----------------
@@ -227,6 +248,60 @@ export function renderClosedHotels(r: ReportData): string {
     const said = c.items.filter((i) => i.closureLine);
     if (!said.length) out.push("  (none)");
     for (const i of said) out.push(`  ${i.engine_id} ${i.question_id} (${i.sentiment}): "${clipLine(i.closureLine!, 260)}"`);
+  }
+  return out.join("\n");
+}
+
+const pct = (x: number) => `${(100 * x).toFixed(1)} %`;
+
+export function renderSources(r: ReportData, o: { topDomains?: number } = {}): string {
+  const top = o.topDomains ?? 15;
+  const labels = new Map(r.sources.engines.flatMap((e) => e.categories.map((c) => [c.id, c.label] as [string, string])));
+  const out: string[] = [
+    "SOURCES (Viri): domains the engines cited or retrieved",
+    "OpenAI: \"cited\" = a source tied to a passage of the answer. Claude: \"retrieved\" = a search result returned for the answer; Claude's answers of this run contain no passage-level citations. The two counts are therefore NOT the same kind of number.",
+    "Count = every source entry (the same page cited twice in one answer counts twice). Share = count / all sources of the engine. Groups come from config/source-categories.json.",
+    "",
+    table([
+      ["engine", "kind", "answers", "answers with sources", "sources", "different domains"],
+      ...r.sources.engines.map((e) => [e.engine_id, e.kind, e.answers, e.answersWithSources, e.total, e.distinctDomains]),
+    ]),
+  ];
+  for (const e of r.sources.engines) {
+    out.push("", `--- ${e.engine_id}: by group`, table([["group", "sources", "share", "different domains"], ...e.categories.map((c) => [c.label, c.count, pct(c.share), c.domains])]));
+    out.push("", `--- ${e.engine_id}: ${Math.min(top, e.domains.length)} most frequent domains`, table([
+      ["#", "domain", "group", "sources", "share", "in answers"],
+      ...e.domains.slice(0, top).map((d, i) => [i + 1, d.domain, labels.get(d.category) ?? d.category, d.count, pct(d.share), `${d.answers}/${e.answers}`]),
+    ]));
+  }
+  out.push("", `--- Domains not placed in any group ("drugo"): ${r.sources.unclassified.length}. Place them in config/source-categories.json if you want them counted elsewhere.`);
+  if (r.sources.unclassified.length)
+    out.push(table([["domain", "sources", "engines", "sample page title"], ...r.sources.unclassified.map((u) => [u.domain, u.count, u.engines.join(","), (u.sampleTitle ?? "").slice(0, 60)])]));
+
+  out.push("", "--- Sources per hotel of the top list (sources in answers that name the hotel)",
+    "A source is linked to a hotel only if its title/URL names exactly one hotel of that answer, or (OpenAI) the line of the answer holding the cited passage, or the heading above it, names exactly one. Everything else is NOT attributed: 'ambiguous' = several hotels named, 'not linkable' = no hotel found or (Claude) no passage to look at. Nothing is guessed.");
+  for (const h of r.sources.perHotel) {
+    out.push("", h.hotel);
+    for (const e of h.perEngine) {
+      if (!e.answers) { out.push(`  ${e.engine_id}: not named in any answer`); continue; }
+      const doms = e.domains.slice(0, 6).map((d) => `${d.domain} ×${d.count}`).join(", ") || "—";
+      const cats = Object.entries(e.categories).map(([k, n]) => `${labels.get(k) ?? k} ${n}`).join(", ") || "—";
+      out.push(`  ${e.engine_id}: named in ${e.answers} answers · ${e.totalSources} sources in those answers · linked to this hotel: ${e.linked} (title/URL ${e.byBasis["title/URL"]}, passage ${e.byBasis.passage}, heading ${e.byBasis["section heading"]}) · ambiguous ${e.ambiguous} · not linkable ${e.unlinked}`);
+      out.push(`      domains linked: ${doms}`, `      groups linked: ${cats}`);
+    }
+  }
+  for (const c of r.sources.closed) {
+    out.push("", `--- ${c.fact.name} (closed until ${c.fact.valid_until ?? "?"}): sources in the answers that name it`);
+    for (const e of c.engines) {
+      out.push("", `${e.engine_id}: ${e.mentions.length} mentions · answers with a source of an official hotel/operator site linked to it: ${e.withOfficialHotelSource}`);
+      out.push(table([
+        ["question", "rep", "sentiment", "closure warning", "closure line cited by", "linked sources (domain, group)", "sources in answer"],
+        ...e.mentions.map((m) => [m.question_id, m.repetition, m.sentiment, m.closureLine ? "yes" : "no", m.closureCitedBy.join(", ") || "—",
+          [...new Set(m.linked.map((l) => `${l.domain} (${labels.get(l.category) ?? l.category})`))].join("; ") || "none linked", m.allSources]),
+      ]));
+      out.push(`domains linked to the hotel: ${e.linkedDomains.map((d) => `${d.domain} (${labels.get(d.category) ?? d.category}) in ${d.mentions} mention(s)`).join(", ") || "none"}`);
+      out.push(`most frequent domains in these answers (all sources): ${e.allDomains.map((d) => `${d.domain} ×${d.count}`).join(", ")}`);
+    }
   }
   return out.join("\n");
 }
@@ -332,7 +407,7 @@ export function renderAnswers(r: ReportData, maxChars: number, only?: DestAnswer
 
 /** Terminal report: header, table, checks, cost, a few examples of answer vs extraction. */
 export function renderTerminal(r: ReportData, o: { examples: number; maxChars: number }): string {
-  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderAliases(r), "", renderTop(r), "", renderStability(r), "", renderClosedHotels(r), "", renderDemoted(r), "", renderAnalysisStats(r), "", "COST (estimate vs actual)", renderCost(r)];
+  const parts = [renderHeader(r), "", renderHotelTable(r), "", renderChecks(r), "", renderAliases(r), "", renderTop(r), "", renderStability(r), "", renderSources(r, { topDomains: 10 }), "", renderClosedHotels(r), "", renderDemoted(r), "", renderAnalysisStats(r), "", "COST (estimate vs actual)", renderCost(r)];
   if (o.examples > 0) {
     // spread the examples over different engines
     const pick: DestAnswerRow[] = [];
@@ -356,6 +431,7 @@ export function renderMarkdown(r: ReportData): string {
     "", "## Name unification", fence(renderAliases(r)),
     "", "## Most recommended hotels", fence(renderTop(r)),
     "", "## Stability across repetitions", fence(renderStability(r)),
+    "", "## Viri (sources)", fence(renderSources(r)),
     "", "## Priporočila nedosegljivih hotelov (recommendations of unavailable hotels)", fence(renderClosedHotels(r)),
     "", "## Booking pointers demoted by the code", fence(renderDemoted(r)),
     "", "## Analysis quality", fence(renderAnalysisStats(r)),
