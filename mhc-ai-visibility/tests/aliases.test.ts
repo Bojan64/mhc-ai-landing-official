@@ -34,15 +34,15 @@ const AL: AliasesFile = {
 const ref = { run: "r", engine_id: "anthropic", question_id: "D6", repetition: 1 };
 
 describe("destination-aliases.json", () => {
-  it("ships the owner's decisions: 18 groups, two exclusions, one manual correction, Berc kept apart", () => {
+  it("ships the owner's decisions: 18 groups, two exclusions, four manual corrections (Sava Hotels Bled list), Berc kept apart", () => {
     const { config, errors } = loadDestinationConfig(CONFIG_DIR);
     expect(errors).toEqual([]);
     const a = config!.aliases;
     expect(a.groups).toHaveLength(18);
     expect(a.groups.every((g) => g.confirmed_by === "owner" && g.confirmed_on === "2026-10-18")).toBe(true);
     expect(a.exclusions.map((x) => x.name).sort()).toEqual(["Sava Hotels Bled", "Wellness Essense"]);
-    expect(a.overrides).toHaveLength(1);
-    expect(a.overrides[0]).toMatchObject({ run: "bled-full-01", engine_id: "anthropic", question_id: "D6", repetition: 1, hotel: "Grand Hotel Toplice", from: "recommended", to: "neutral" });
+    expect(a.overrides.map((o) => o.hotel)).toEqual(["Grand Hotel Toplice", "Rikli Balance Hotel", "Hotel Park", "Hotel Savica Garni"]);
+    for (const o of a.overrides) expect(o).toMatchObject({ run: "bled-full-01", engine_id: "anthropic", question_id: "D6", repetition: 1, field: "sentiment", from: "recommended", to: "neutral", confirmed_by: "owner" });
     const ribno = a.groups.find((g) => g.canonical === "Ribno Alpine Resort")!;
     expect(ribno.aliases).toEqual(expect.arrayContaining(["Hotel Ribno", "Ribno Alpine Hotel", "Ribno Alpine Glamping"]));
     const all = new Map(a.groups.flatMap((g) => [g.canonical, ...g.aliases].map((n) => [nameKey(n), g.canonical] as const)));
